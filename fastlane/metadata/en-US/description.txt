@@ -1,0 +1,32 @@
+Arkhe is a modern, native IRC client for iPhone and iPad, built from the ground up for IRCv3 and designed to feel right at home with modern IRC bouncers.
+
+Whether you run your own bouncer or connect directly to your favorite IRC networks, Arkhe keeps your conversations in sync and your credentials secure.
+
+WHY ARKHE
+• Native SwiftUI app — fast, lightweight and made for iOS.
+• Built for IRCv3, not retrofitted onto an old protocol.
+• Secure by default: passwords and certificates live in the iOS Keychain, never stored in plain text.
+
+SECURE AUTHENTICATION
+• SASL PLAIN for username and password login.
+• SASL EXTERNAL with CertFP — sign in with a client TLS certificate, no password required.
+• TLS connections with modern cipher support.
+
+BUILT FOR BOUNCERS
+• Full IRC bouncer support: automatically discover and browse every network on your bouncer.
+• A seamless multi-network experience from a single connection.
+• Automatic scrollback with chathistory — pick up right where you left off when you join a channel.
+
+IRCv3 DONE RIGHT
+• server-time for accurate timestamps on history.
+• message-tags, batch, echo-message, cap-notify.
+• account-notify, away-notify, chghost, extended-join, multi-prefix, userhost-in-names, setname and invite-notify.
+
+MADE FOR iPHONE AND iPAD
+• Adaptive layout with a three-column view on iPad.
+• A clean, focused reading experience.
+• Inline media and file uploads through your own uploader.
+
+Arkhe is open source. If you'd rather build it yourself, the full source code is available — see the developer's website.
+
+Note: Arkhe is a chat client. You'll need access to an IRC server or an IRC bouncer to use it.

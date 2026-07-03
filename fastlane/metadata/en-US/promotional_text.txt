@@ -1,0 +1,1 @@
+A fast, native IRC client built for IRCv3 — with SASL, CertFP and full IRC bouncer support. Your chats stay in sync and secure across iPhone and iPad.

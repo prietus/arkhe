@@ -1,0 +1,3 @@
+Initial release.
+
+Arkhe is a native IRCv3 client for iPhone and iPad with SASL, CertFP and full IRC bouncer support.
