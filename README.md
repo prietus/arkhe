@@ -1,95 +1,105 @@
 # Arkhe
 
-Cliente IRC para iPhone/iPad centrado en **IRCv3**, con **SASL** (PLAIN y
-EXTERNAL/**CertFP**) y compatible con bouncers/relays tipo **soju**.
+An IRC client for iPhone/iPad focused on **IRCv3**, with **SASL** (PLAIN and
+EXTERNAL/**CertFP**) and compatible with soju-style bouncers/relays.
 
-Escrito en Swift 6 + SwiftUI, con un núcleo de protocolo puro y testeado.
+Written in Swift 6 + SwiftUI, with a pure, tested protocol core.
 
-## Arquitectura
+## Screenshots
+
+<p align="center">
+  <img src="docs/screenshots/chat.png" width="30%" alt="Channel view with inline link previews and a multi-network sidebar">
+  &nbsp;
+  <img src="docs/screenshots/settings.png" width="30%" alt="Display and privacy settings">
+  &nbsp;
+  <img src="docs/screenshots/console.png" width="30%" alt="Raw IRCv3 protocol console for debugging">
+</p>
+
+## Architecture
 
 ```
-IRCCore/                  Paquete SPM puro (Foundation). Sin dependencias de plataforma.
-  IRCMessage*             Modelo de mensaje IRCv3 + parser + encoder (tags, source, trailing)
-  IRCTags                 Escapado de message-tags (\s \: \\ \r \n)
-  SASL                    PLAIN y EXTERNAL: respuestas y troceado en chunks de 400 bytes
-  Capability*             CAP LS/REQ/ACK/END + flujo SASL como máquina de estados pura
-  ISupport / CaseMapping  Parsing de 005 y plegado de mayúsculas (ascii/rfc1459)
-  → 30 tests con `swift test`
+IRCCore/                  Pure SPM package (Foundation). No platform dependencies.
+  IRCMessage*             IRCv3 message model + parser + encoder (tags, source, trailing)
+  IRCTags                 message-tags escaping (\s \: \\ \r \n)
+  SASL                    PLAIN and EXTERNAL: responses and chunking into 400-byte pieces
+  Capability*             CAP LS/REQ/ACK/END + SASL flow as a pure state machine
+  ISupport / CaseMapping  Parsing of 005 and case folding (ascii/rfc1459)
+  → 30 tests via `swift test`
 
-App/                      Target iOS (Arkhe)
+App/                      iOS target (Arkhe)
   Transport/
-    IRCConnection         Actor sobre NWConnection: TLS, framing CRLF, AsyncStream de eventos
-    TLSIdentity           Identidad de cliente PKCS#12 para CertFP + huella SHA-256
+    IRCConnection         Actor over NWConnection: TLS, CRLF framing, AsyncStream of events
+    TLSIdentity           PKCS#12 client identity for CertFP + SHA-256 fingerprint
   Session/
-    IRCSession            @Observable @MainActor: orquesta registro, dispatch, buffers, soju
+    IRCSession            @Observable @MainActor: orchestrates registration, dispatch, buffers, soju
     RuntimeModels         Buffer, ChatLine, Member, BouncerNetwork
-    SessionConfig         Snapshot Sendable de la config
+    SessionConfig         Sendable snapshot of the config
   Model/
-    ServerConfig          @Model SwiftData (secretos en Keychain, no en el store)
-    Keychain              Wrapper de Keychain para contraseñas y frases de certificado
-  Store/ClientStore       Estado runtime: sesiones vivas + selección
-  Views/                  NavigationSplitView adaptable iPhone/iPad
+    ServerConfig          @Model SwiftData (secrets in Keychain, not in the store)
+    Keychain              Keychain wrapper for passwords and certificate passphrases
+  Store/ClientStore       Runtime state: live sessions + selection
+  Views/                  Adaptive iPhone/iPad NavigationSplitView
 ```
 
-## Funcionalidades IRCv3
+## IRCv3 features
 
-- `message-tags`, `server-time` (timestamps reales en el historial), `batch`
-- `sasl` con **PLAIN** y **EXTERNAL** (CertFP por certificado de cliente TLS)
-- `cap-notify` (CAP NEW/DEL), `echo-message` (echo local sólo si no está activo)
+- `message-tags`, `server-time` (real timestamps in history), `batch`
+- `sasl` with **PLAIN** and **EXTERNAL** (CertFP via TLS client certificate)
+- `cap-notify` (CAP NEW/DEL), `echo-message` (local echo only when it isn't active)
 - `account-notify`, `away-notify`, `chghost`, `extended-join`, `multi-prefix`,
   `userhost-in-names`, `setname`, `invite-notify`
-- `draft/chathistory` — scrollback automático al unirse a un canal
-- **soju**: `soju.im/bouncer-networks` (+notify) — descubre y lista las redes del bouncer
+- `draft/chathistory` — automatic scrollback when joining a channel
+- **soju**: `soju.im/bouncer-networks` (+notify) — discovers and lists the bouncer's networks
 
-## Requisitos
+## Requirements
 
 - Xcode 26+, iOS 17+ (SwiftData + Observation)
 - `xcodegen` (`brew install xcodegen`)
 
-## Compilar y ejecutar
+## Build and run
 
 ```sh
-# Núcleo de protocolo (tests)
+# Protocol core (tests)
 cd IRCCore && swift test
 
-# Generar el proyecto y compilar la app
+# Generate the project and build the app
 xcodegen generate
 xcodebuild -project Arkhe.xcodeproj -scheme Arkhe \
   -destination 'platform=iOS Simulator,name=iPhone 16' build
 ```
 
-Abre `Arkhe.xcodeproj` en Xcode para ejecutar en simulador o dispositivo.
+Open `Arkhe.xcodeproj` in Xcode to run on a simulator or device.
 
-> **Si compilas tú mismo para instalarlo en tu iPhone:** el proyecto trae mi
-> `DEVELOPMENT_TEAM` y `PRODUCT_BUNDLE_IDENTIFIER` (`im.arkhe.client`) en
-> `project.yml`. Cámbialos por los tuyos (tu Team ID de Apple y un bundle id
-> propio, p. ej. `com.tunombre.arkhe`) y vuelve a ejecutar `xcodegen generate`.
-> El `.xcodeproj` no se versiona: se genera a partir de `project.yml`.
+> **If you build it yourself to install on your own iPhone:** the project ships
+> with my `DEVELOPMENT_TEAM` and `PRODUCT_BUNDLE_IDENTIFIER` (`im.arkhe.client`)
+> in `project.yml`. Change them to your own (your Apple Team ID and your own
+> bundle id, e.g. `com.yourname.arkhe`) and run `xcodegen generate` again. The
+> `.xcodeproj` is not versioned: it is generated from `project.yml`.
 
-## CertFP con soju
+## CertFP with soju
 
-1. Genera un certificado de cliente y empaquétalo en `.p12`.
-2. En la app: nuevo servidor → SASL = **EXTERNAL** → importa el `.p12`.
-3. Copia la **huella SHA-256** que muestra la app y regístrala en la red
-   (`/msg NickServ CERT ADD`) o en la config de soju.
+1. Generate a client certificate and package it as a `.p12`.
+2. In the app: new server → SASL = **EXTERNAL** → import the `.p12`.
+3. Copy the **SHA-256 fingerprint** the app shows and register it on the network
+   (`/msg NickServ CERT ADD`) or in your soju config.
 
-## Pendiente (siguiente iteración)
+## Roadmap (next iteration)
 
-- Notificaciones locales/push para menciones y mensajes privados
-- Persistencia del historial de mensajes (hoy sólo se persiste la config)
-- Multiplexado completo por red del bouncer (bind / cambio de red en vivo en la UI)
-- SCRAM-SHA-256, comandos slash adicionales, tema/ajustes, búsqueda
+- Local/push notifications for mentions and private messages
+- Message history persistence (only the config is persisted today)
+- Full per-network bouncer multiplexing (bind / live network switching in the UI)
+- SCRAM-SHA-256, additional slash commands, theming/settings, search
 
 ## App Store
 
-Arkhe está disponible en la App Store (0,99 €) como forma cómoda de instalarlo
-y de apoyar el desarrollo. El código es abierto: si prefieres compilarlo tú
-mismo, sigue las instrucciones de arriba.
+Arkhe is available on the App Store (€0.99) as a convenient way to install it
+and to support development. The code is open: if you'd rather build it yourself,
+follow the instructions above.
 
-## Licencia
+## License
 
 [Apache 2.0](LICENSE) © 2026 Carlos Prieto
 
-El código es abierto bajo Apache 2.0. El **nombre "Arkhe" y el icono** son
-marcas del autor y no se licencian con el código (Apache 2.0, §6): un fork
-debe usar su propio nombre e icono.
+The code is open source under Apache 2.0. The **name "Arkhe" and the icon** are
+trademarks of the author and are not licensed with the code (Apache 2.0, §6):
+a fork must use its own name and icon.
