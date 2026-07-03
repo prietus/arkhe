@@ -1,5 +1,7 @@
 import Foundation
 import Observation
+import SwiftUI
+import UIKit
 
 /// App-wide runtime state: the live `IRCSession`s and the current UI selection.
 /// Persisted `ServerConfig`s live in SwiftData and are queried by the views;
@@ -7,6 +9,12 @@ import Observation
 @MainActor
 @Observable
 final class ClientStore {
+    let notifications: NotificationManager
+
+    init(notifications: NotificationManager) {
+        self.notifications = notifications
+    }
+
     private(set) var sessions: [UUID: IRCSession] = [:]
     /// Bound soju network sessions opened under a base account config.
     private(set) var networkSessions: [UUID: [IRCSession]] = [:]
@@ -36,7 +44,7 @@ final class ClientStore {
             return
         }
         let baseConfig = sessions[base.id]?.config ?? SessionConfig(base)
-        let session = IRCSession(config: SessionConfig(boundNetwork: network, base: baseConfig))
+        let session = makeSession(SessionConfig(boundNetwork: network, base: baseConfig))
         sessions[session.id] = session
         networkSessions[base.id, default: []].append(session)
         networkKeys[key] = session
@@ -54,8 +62,21 @@ final class ClientStore {
     @discardableResult
     func session(for config: ServerConfig) -> IRCSession {
         if let existing = sessions[config.id] { return existing }
-        let session = IRCSession(config: SessionConfig(config))
+        let session = makeSession(SessionConfig(config))
         sessions[config.id] = session
+        return session
+    }
+
+    /// Builds a session and routes its notifiable events to the app's
+    /// notification layer.
+    private func makeSession(_ config: SessionConfig) -> IRCSession {
+        let session = IRCSession(config: config)
+        session.onNotifiableEvent = { [weak self] event in
+            self?.notifications.present(event)
+        }
+        session.onWebPushReady = { [weak self] in
+            self?.notifications.registerWebPushEverywhere()
+        }
         return session
     }
 
@@ -99,5 +120,45 @@ final class ClientStore {
         selectedBufferID = buffer.id
         buffer.unreadCount = 0
         buffer.hasMention = false
+    }
+
+    // MARK: - App lifecycle
+
+    /// Reacts to foreground/background transitions: hold the connection briefly
+    /// when leaving, and reconnect + clear the badge when returning.
+    func handleScenePhase(_ phase: ScenePhase) {
+        switch phase {
+        case .background:
+            beginBackgroundHold()
+        case .active:
+            endBackgroundHold()
+            notifications.clearBadge()
+            reconnectDroppedSessions()
+        default:
+            break
+        }
+    }
+
+    /// Re-dials any session the user wanted up but that dropped while suspended.
+    private func reconnectDroppedSessions() {
+        for session in sessions.values { session.reconnectIfDropped() }
+    }
+
+    private var backgroundHold: UIBackgroundTaskIdentifier = .invalid
+
+    /// Buys a short grace period after backgrounding so a message landing in the
+    /// next few seconds is still processed (and can raise a local notification)
+    /// before iOS suspends us and the bouncer takes over holding presence.
+    private func beginBackgroundHold() {
+        endBackgroundHold()
+        backgroundHold = UIApplication.shared.beginBackgroundTask(withName: "im.arkhe.hold") {
+            [weak self] in self?.endBackgroundHold()
+        }
+    }
+
+    private func endBackgroundHold() {
+        guard backgroundHold != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(backgroundHold)
+        backgroundHold = .invalid
     }
 }

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Same App Group as the app, so the extension can read the shared
+	     Keychain item holding the Web Push private key to decrypt pushes. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.im.arkhe.client</string>
+	</array>
+</dict>
+</plist>

@@ -1,0 +1,28 @@
+[Unit]
+Description=Arkhe Web Push -> APNs relay
+Documentation=https://github.com/teraflops/arkhe
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=arkhe-push
+Group=arkhe-push
+EnvironmentFile=/etc/arkhe-push/env
+ExecStart=/usr/local/bin/arkhe-push
+Restart=on-failure
+RestartSec=3
+
+# Hardening — the relay only needs to read its config and make outbound HTTPS.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+ReadOnlyPaths=/etc/arkhe-push
+
+[Install]
+WantedBy=multi-user.target

@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(Preferences.self) private var prefs
     @Environment(UploaderSettings.self) private var uploader
+    @Environment(NotificationManager.self) private var notifications
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -11,6 +12,45 @@ struct SettingsView: View {
         @Bindable var uploader = uploader
         NavigationStack {
             Form {
+                Section {
+                    Toggle("Enable notifications", isOn: $prefs.notificationsEnabled)
+                    if prefs.notificationsEnabled {
+                        Toggle("Mentions (highlights)", isOn: $prefs.notifyOnMention)
+                        Toggle("Direct messages", isOn: $prefs.notifyOnDirectMessage)
+                        Toggle("Show message preview", isOn: $prefs.notificationPreviews)
+                        Toggle("Play sound", isOn: $prefs.notificationSound)
+                    }
+                } header: {
+                    Text("Notifications")
+                } footer: {
+                    Text(notificationsFooter)
+                }
+                .onChange(of: prefs.notificationsEnabled) { _, enabled in
+                    if enabled { Task { await notifications.requestAuthorization() } }
+                }
+
+                if prefs.notificationsEnabled {
+                    Section {
+                        Toggle("Push when app is closed", isOn: $prefs.remotePushEnabled)
+                        if prefs.remotePushEnabled {
+                            TextField("Relay URL", text: $prefs.pushRelayURL)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .keyboardType(.URL)
+                        }
+                    } header: {
+                        Text("Push (app closed)")
+                    } footer: {
+                        Text("Delivers mentions and direct messages while Arkhe is fully closed, via your bouncer's Web Push. Requires a soju bouncer with web push. Messages are end-to-end encrypted — the relay only forwards them to Apple and can't read them. Self-hosters can point this at their own relay.")
+                    }
+                    .onChange(of: prefs.remotePushEnabled) { _, enabled in
+                        if enabled {
+                            Task { await notifications.requestAuthorization() }
+                            notifications.registerForRemotePush()
+                        }
+                    }
+                }
+
                 Section {
                     Picker("Joins, parts & quits", selection: $prefs.presenceVisibility) {
                         ForEach(Preferences.PresenceVisibility.allCases) { option in
@@ -79,6 +119,13 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private var notificationsFooter: String {
+        if notifications.authorization == .denied {
+            return "Notifications are turned off for Arkhe in iOS Settings. Enable them there to be alerted about mentions and direct messages."
+        }
+        return "Get a local alert when someone mentions your nick or sends you a direct message while Arkhe is open or just backgrounded. Push while the app is fully closed is coming."
     }
 
     private var presenceFooter: String {

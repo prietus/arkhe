@@ -32,6 +32,16 @@ final class IRCSession: Identifiable {
     private(set) var enabledCaps: Set<String> = []
     private(set) var saslMessage: String?
 
+    /// Emitted when an inbound message deserves a user notification: a highlight
+    /// (your nick mentioned in a channel) or a direct message. Wired by
+    /// `ClientStore` to the app's `NotificationManager`.
+    var onNotifiableEvent: ((NotifiableEvent) -> Void)?
+
+    /// Whether the user wants this session connected. Set on `connect()`, cleared
+    /// on an explicit `disconnect()`, so the app can re-dial after iOS drops the
+    /// socket during suspension without reviving sessions the user closed.
+    private(set) var wantsConnection = false
+
     /// All buffers, status window first.
     private(set) var buffers: [Buffer]
     let statusBuffer: Buffer
@@ -44,6 +54,13 @@ final class IRCSession: Identifiable {
     var hasBouncerNetworks: Bool { enabledCaps.contains(CapabilityName.bouncerNetworks) }
     /// The soju network this session is bound to, if it's a network sub-session.
     var boundNetworkID: String? { config.boundNetworkID }
+
+    /// Whether the connected bouncer offers Web Push (`soju.im/webpush`).
+    var supportsWebPush: Bool { enabledCaps.contains("soju.im/webpush") }
+
+    /// Invoked once negotiation finishes and the bouncer supports Web Push, so
+    /// the app can register a push subscription. Wired by `ClientStore`.
+    var onWebPushReady: (() -> Void)?
 
     /// Whether this network relays reaction tags between users (`CLIENTTAGDENY`).
     /// When false, reactions are only ever seen on your own devices.
@@ -120,6 +137,7 @@ final class IRCSession: Identifiable {
     }
 
     func connect() {
+        wantsConnection = true
         guard !status.isActive else { return }
         status = .connecting
         didCaptureCaps = false
@@ -133,11 +151,21 @@ final class IRCSession: Identifiable {
     }
 
     func disconnect(message: String = "Arkhe") {
+        wantsConnection = false
         Task { await connection.send(.quit(message)) }
         Task { await connection.disconnect() }
         eventTask?.cancel()
         status = .offline
         for buffer in buffers { buffer.isJoined = false }
+    }
+
+    /// Re-dials if the user wanted this session up but the socket has since died
+    /// (e.g. iOS tore it down while the app was suspended). No-op otherwise; on
+    /// reconnect, chathistory replays whatever the bouncer buffered.
+    func reconnectIfDropped() {
+        guard wantsConnection, !status.isActive else { return }
+        addStatus("Reconnecting…", kind: .event)
+        connect()
     }
 
     private func runEventLoop() async {
@@ -453,6 +481,10 @@ final class IRCSession: Identifiable {
             handleBatch(message)
         case "BOUNCER":
             handleBouncer(message)
+        case "WEBPUSH":
+            if message.first?.uppercased() == "REGISTER" {
+                addStatus("Push notifications enabled for this network.", kind: .event)
+            }
         case "MARKREAD":
             handleMarkRead(message)
         case "TAGMSG":
@@ -486,6 +518,21 @@ final class IRCSession: Identifiable {
         if enabledCaps.contains(CapabilityName.bouncerNetworks), config.boundNetworkID == nil {
             send(IRCMessage(command: "BOUNCER", parameters: ["LISTNETWORKS"]))
         }
+        if enabledCaps.contains("soju.im/webpush") { onWebPushReady?() }
+    }
+
+    /// Registers a Web Push subscription with the bouncer (soju.im/webpush): the
+    /// bouncer will POST encrypted highlight/DM notifications to `endpoint`.
+    func registerWebPush(endpoint: String, p256dh: String, auth: String) {
+        guard supportsWebPush else { return }
+        send(IRCMessage(command: "WEBPUSH",
+                        parameters: ["REGISTER", endpoint, "p256dh=\(p256dh);auth=\(auth)"]))
+    }
+
+    /// Cancels a previously registered Web Push subscription.
+    func unregisterWebPush(endpoint: String) {
+        guard supportsWebPush else { return }
+        send(IRCMessage(command: "WEBPUSH", parameters: ["UNREGISTER", endpoint]))
     }
 
     private func handleNumeric(_ numeric: IRCNumeric, _ message: IRCMessage) {
@@ -568,6 +615,13 @@ final class IRCSession: Identifiable {
         let mentionsMe = body.localizedCaseInsensitiveContains(currentNick)
         buffer.append(line, markUnread: !isSelf)
         if mentionsMe && !isSelf && !line.isHistorical { buffer.hasMention = true }
+        if !isSelf, !isNotice, !line.isHistorical {
+            if buffer.kind == .query {
+                emitNotification(.directMessage, buffer: buffer, sender: sender, text: body)
+            } else if mentionsMe {
+                emitNotification(.mention, buffer: buffer, sender: sender, text: body)
+            }
+        }
         // A real message ends any typing indicator from that sender.
         if !line.isHistorical { buffer.typing[sender] = nil }
     }
@@ -765,6 +819,13 @@ final class IRCSession: Identifiable {
         let mentionsMe = text.localizedCaseInsensitiveContains(currentNick)
         buffer.append(line, markUnread: !isSelf)
         if mentionsMe && !isSelf && !historical { buffer.hasMention = true }
+        if !isSelf, !historical {
+            if buffer.kind == .query {
+                emitNotification(.directMessage, buffer: buffer, sender: sender, text: text)
+            } else if mentionsMe {
+                emitNotification(.mention, buffer: buffer, sender: sender, text: text)
+            }
+        }
         if !historical { buffer.typing[sender] = nil }
     }
 
@@ -1010,5 +1071,15 @@ final class IRCSession: Identifiable {
     func addStatus(_ text: String, kind: ChatLine.Kind) {
         statusBuffer.append(ChatLine(timestamp: Date(), sender: nil, text: text, kind: kind),
                             markUnread: false)
+    }
+
+    /// Hands a highlight or direct message to the app's notification layer. The
+    /// title is the channel for a mention and the sender for a direct message.
+    private func emitNotification(_ kind: NotifiableEvent.Kind, buffer: Buffer,
+                                  sender: String, text: String) {
+        onNotifiableEvent?(NotifiableEvent(
+            kind: kind, sessionID: id, bufferID: buffer.id,
+            conversation: kind == .mention ? buffer.name : sender,
+            sender: sender, text: text))
     }
 }

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Remote push. Xcode swaps this to "production" when archiving for the
+	     App Store. Requires the Push Notifications capability on the App ID. -->
+	<key>aps-environment</key>
+	<string>development</string>
+	<!-- Shared with the Notification Service Extension so both can reach the
+	     Keychain item holding the Web Push private key. -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.im.arkhe.client</string>
+	</array>
+</dict>
+</plist>

@@ -48,6 +48,22 @@ final class Preferences {
     /// reveal your IP to the link's host — an IRC privacy consideration).
     var autoLoadMedia: Bool                     { didSet { d.set(autoLoadMedia, forKey: K.media) } }
 
+    /// Local notifications for highlights and direct messages. `notificationsEnabled`
+    /// is the master switch; the rest refine it.
+    var notificationsEnabled: Bool     { didSet { d.set(notificationsEnabled, forKey: K.notifEnabled) } }
+    var notifyOnMention: Bool          { didSet { d.set(notifyOnMention, forKey: K.notifMention) } }
+    var notifyOnDirectMessage: Bool    { didSet { d.set(notifyOnDirectMessage, forKey: K.notifDM) } }
+    /// Whether the alert shows the message text (off = "New message" only).
+    var notificationPreviews: Bool     { didSet { d.set(notificationPreviews, forKey: K.notifPreview) } }
+    var notificationSound: Bool        { didSet { d.set(notificationSound, forKey: K.notifSound) } }
+
+    /// Remote push (via the bouncer's `soju.im/webpush` + a relay) so alerts
+    /// arrive when the app is fully closed. Off by default.
+    var remotePushEnabled: Bool        { didSet { d.set(remotePushEnabled, forKey: K.pushEnabled) } }
+    /// The Web Push → APNs relay the app registers with soju. Default is the
+    /// shared relay; self-hosters can point this at their own.
+    var pushRelayURL: String           { didSet { d.set(pushRelayURL, forKey: K.pushRelay) } }
+
     private let d = UserDefaults.standard
 
     private enum K {
@@ -56,7 +72,16 @@ final class Preferences {
         static let timestamps = "pref.showTimestamps"
         static let clock      = "pref.clockStyle"
         static let media      = "pref.autoLoadMedia"
+        static let notifEnabled = "pref.notificationsEnabled"
+        static let notifMention = "pref.notifyOnMention"
+        static let notifDM      = "pref.notifyOnDirectMessage"
+        static let notifPreview = "pref.notificationPreviews"
+        static let notifSound   = "pref.notificationSound"
+        static let pushEnabled  = "pref.remotePushEnabled"
+        static let pushRelay    = "pref.pushRelayURL"
     }
+
+    static let defaultRelayURL = "https://push.arkhe.priet.us"
 
     init() {
         // didSet does not fire for these initial assignments, so no redundant writes.
@@ -65,5 +90,12 @@ final class Preferences {
         showTimestamps = d.object(forKey: K.timestamps) as? Bool ?? true
         clockStyle = ClockStyle(rawValue: d.string(forKey: K.clock) ?? "") ?? .system
         autoLoadMedia = d.object(forKey: K.media) as? Bool ?? true
+        notificationsEnabled = d.object(forKey: K.notifEnabled) as? Bool ?? true
+        notifyOnMention = d.object(forKey: K.notifMention) as? Bool ?? true
+        notifyOnDirectMessage = d.object(forKey: K.notifDM) as? Bool ?? true
+        notificationPreviews = d.object(forKey: K.notifPreview) as? Bool ?? true
+        notificationSound = d.object(forKey: K.notifSound) as? Bool ?? true
+        remotePushEnabled = d.object(forKey: K.pushEnabled) as? Bool ?? false
+        pushRelayURL = d.string(forKey: K.pushRelay) ?? Self.defaultRelayURL
     }
 }

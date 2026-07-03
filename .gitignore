@@ -23,3 +23,5 @@ Package.resolved
 *.pem
 *.mobileprovision
 *.cer
+*.p8
+AuthKey_*.p8

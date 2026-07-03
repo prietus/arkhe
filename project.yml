@@ -16,8 +16,10 @@ targets:
     deploymentTarget: "17.0"
     sources:
       - path: App
+      - path: Shared
     dependencies:
       - package: IRCCore
+      - target: ArkheNotificationService
     info:
       path: App/Resources/Info.plist
       properties:
@@ -47,3 +49,35 @@ targets:
         DEVELOPMENT_TEAM: LFTD9T269J
         ENABLE_PREVIEWS: "YES"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Remote push + shared Keychain. Needs the Push Notifications and App
+        # Groups capabilities on App ID im.arkhe.client (see docs/push-notifications.md).
+        CODE_SIGN_ENTITLEMENTS: Config/Arkhe.entitlements
+
+  # Decrypts Web Push payloads (relayed via APNs) on-device and formats the
+  # notification. See push-relay/ and docs/push-notifications.md.
+  ArkheNotificationService:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: NotificationService
+      - path: Shared
+    dependencies:
+      - package: IRCCore
+    info:
+      path: NotificationService/Info.plist
+      properties:
+        CFBundleDisplayName: Arkhe
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: im.arkhe.client.NotificationService
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_VERSION: "6.0"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: LFTD9T269J
+        CODE_SIGN_ENTITLEMENTS: Config/NotificationService.entitlements
