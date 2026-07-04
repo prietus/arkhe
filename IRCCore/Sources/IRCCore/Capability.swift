@@ -63,6 +63,8 @@ public enum CapabilityName {
     public static let bouncerNetworks = "soju.im/bouncer-networks"
     public static let bouncerNetworksNotify = "soju.im/bouncer-networks-notify"
     public static let noImplicitNames = "soju.im/no-implicit-names"
+    /// Web Push: lets the bouncer push highlights/DMs while the app is closed.
+    public static let webpush = "soju.im/webpush"
 
     /// The capabilities the client requests when offered. SASL is requested
     /// only when credentials are configured (handled by the negotiator).
@@ -71,6 +73,6 @@ public enum CapabilityName {
         accountNotify, accountTag, awayNotify, chghost, extendedJoin,
         multiPrefix, userhostInNames, capNotify, setname, inviteNotify,
         standardReplies, chathistory, eventPlayback, messageRedaction, readMarker,
-        multiline, bouncerNetworks, bouncerNetworksNotify,
+        multiline, bouncerNetworks, bouncerNetworksNotify, noImplicitNames, webpush,
     ]
 }

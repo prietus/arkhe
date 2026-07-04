@@ -10,9 +10,11 @@ import UIKit
 @Observable
 final class ClientStore {
     let notifications: NotificationManager
+    let preferences: Preferences
 
-    init(notifications: NotificationManager) {
+    init(notifications: NotificationManager, preferences: Preferences) {
         self.notifications = notifications
+        self.preferences = preferences
     }
 
     private(set) var sessions: [UUID: IRCSession] = [:]
@@ -77,6 +79,9 @@ final class ClientStore {
         session.onWebPushReady = { [weak self] in
             self?.notifications.registerWebPushEverywhere()
         }
+        session.highlightKeywords = { [weak self] in
+            self?.preferences.highlightKeywords ?? []
+        }
         return session
     }
 
@@ -120,6 +125,9 @@ final class ClientStore {
         selectedBufferID = buffer.id
         buffer.unreadCount = 0
         buffer.hasMention = false
+        // Lazily fetch the roster the first time a channel is opened (see
+        // `loadMembersIfNeeded` — relevant under soju.im/no-implicit-names).
+        session.loadMembersIfNeeded(buffer)
     }
 
     // MARK: - App lifecycle
@@ -149,16 +157,24 @@ final class ClientStore {
     /// Buys a short grace period after backgrounding so a message landing in the
     /// next few seconds is still processed (and can raise a local notification)
     /// before iOS suspends us and the bouncer takes over holding presence.
-    private func beginBackgroundHold() {
+    // `nonisolated` + `onMainThread` so these are safe from any caller — the
+    // scenePhase callback and the expiration handler both arrive off-main, and
+    // UIApplication's background-task API asserts main-thread-only.
+    nonisolated private func beginBackgroundHold() {
         endBackgroundHold()
-        backgroundHold = UIApplication.shared.beginBackgroundTask(withName: "im.arkhe.hold") {
-            [weak self] in self?.endBackgroundHold()
+        onMainThread { [weak self] in
+            guard let self else { return }
+            self.backgroundHold = UIApplication.shared.beginBackgroundTask(withName: "im.arkhe.hold") {
+                [weak self] in self?.endBackgroundHold()
+            }
         }
     }
 
-    private func endBackgroundHold() {
-        guard backgroundHold != .invalid else { return }
-        UIApplication.shared.endBackgroundTask(backgroundHold)
-        backgroundHold = .invalid
+    nonisolated private func endBackgroundHold() {
+        onMainThread { [weak self] in
+            guard let self, self.backgroundHold != .invalid else { return }
+            UIApplication.shared.endBackgroundTask(self.backgroundHold)
+            self.backgroundHold = .invalid
+        }
     }
 }

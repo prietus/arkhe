@@ -55,5 +55,12 @@ final class NotificationService: UNNotificationServiceExtension {
         content.subtitle = isChannel ? sender : ""
         content.body = text
         content.threadIdentifier = target
+
+        // Offer the inline Reply action. The app has no runtime UUIDs for a
+        // push-delivered message, so it routes the reply by conversation name:
+        // the channel for a highlight, the sender for a direct message.
+        content.categoryIdentifier = NotificationCategory.message
+        content.userInfo[NotificationKey.target] = isChannel ? target : sender
+        content.userInfo[NotificationKey.isChannel] = isChannel
     }
 }

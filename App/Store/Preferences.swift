@@ -57,6 +57,40 @@ final class Preferences {
     var notificationPreviews: Bool     { didSet { d.set(notificationPreviews, forKey: K.notifPreview) } }
     var notificationSound: Bool        { didSet { d.set(notificationSound, forKey: K.notifSound) } }
 
+    /// Extra words (besides your nick) that trigger a highlight and its alert.
+    var highlightKeywords: [String]    { didSet { d.set(highlightKeywords, forKey: K.highlights) } }
+
+    /// Conversations (channels or nicks, lowercased) muted from local alerts.
+    /// Unread/mention state still updates in-app; only the notification is
+    /// suppressed. Remote push (app closed) is decided by the bouncer and isn't
+    /// affected. Managed via `setMuted`.
+    private(set) var mutedConversations: Set<String>
+
+    func isMuted(_ conversation: String) -> Bool {
+        mutedConversations.contains(conversation.lowercased())
+    }
+
+    func setMuted(_ muted: Bool, for conversation: String) {
+        let key = conversation.lowercased()
+        if muted { mutedConversations.insert(key) } else { mutedConversations.remove(key) }
+        d.set(Array(mutedConversations), forKey: K.muted)
+    }
+
+    /// Appends a trimmed keyword, ignoring blanks and case-insensitive duplicates.
+    func addHighlightKeyword(_ word: String) {
+        let w = word.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !w.isEmpty,
+              !highlightKeywords.contains(where: { $0.caseInsensitiveCompare(w) == .orderedSame })
+        else { return }
+        highlightKeywords.append(w)
+    }
+
+    func removeHighlightKeywords(at offsets: IndexSet) {
+        highlightKeywords = highlightKeywords.enumerated()
+            .filter { !offsets.contains($0.offset) }
+            .map(\.element)
+    }
+
     /// Remote push (via the bouncer's `soju.im/webpush` + a relay) so alerts
     /// arrive when the app is fully closed. Off by default.
     var remotePushEnabled: Bool        { didSet { d.set(remotePushEnabled, forKey: K.pushEnabled) } }
@@ -77,6 +111,8 @@ final class Preferences {
         static let notifDM      = "pref.notifyOnDirectMessage"
         static let notifPreview = "pref.notificationPreviews"
         static let notifSound   = "pref.notificationSound"
+        static let highlights   = "pref.highlightKeywords"
+        static let muted        = "pref.mutedConversations"
         static let pushEnabled  = "pref.remotePushEnabled"
         static let pushRelay    = "pref.pushRelayURL"
     }
@@ -95,6 +131,8 @@ final class Preferences {
         notifyOnDirectMessage = d.object(forKey: K.notifDM) as? Bool ?? true
         notificationPreviews = d.object(forKey: K.notifPreview) as? Bool ?? true
         notificationSound = d.object(forKey: K.notifSound) as? Bool ?? true
+        highlightKeywords = d.stringArray(forKey: K.highlights) ?? []
+        mutedConversations = Set(d.stringArray(forKey: K.muted) ?? [])
         remotePushEnabled = d.object(forKey: K.pushEnabled) as? Bool ?? false
         pushRelayURL = d.string(forKey: K.pushRelay) ?? Self.defaultRelayURL
     }

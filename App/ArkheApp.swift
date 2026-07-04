@@ -13,7 +13,7 @@ struct ArkheApp: App {
     init() {
         let notifications = NotificationManager()
         let preferences = Preferences()
-        let store = ClientStore(notifications: notifications)
+        let store = ClientStore(notifications: notifications, preferences: preferences)
         notifications.attach(store: store, preferences: preferences)
         _store = State(initialValue: store)
         _preferences = State(initialValue: preferences)
@@ -37,8 +37,13 @@ struct ArkheApp: App {
         }
         .modelContainer(for: ServerConfig.self)
         .onChange(of: scenePhase) { _, phase in
-            notifications.scenePhase = phase
-            store.handleScenePhase(phase)
+            // Force onto the main thread: this callback has been observed firing
+            // off-main on device, and handleScenePhase calls UIApplication's
+            // background-task API, which asserts main-only.
+            Task { @MainActor in
+                notifications.scenePhase = phase
+                store.handleScenePhase(phase)
+            }
         }
     }
 }

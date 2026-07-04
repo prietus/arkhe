@@ -6,6 +6,7 @@ struct SettingsView: View {
     @Environment(UploaderSettings.self) private var uploader
     @Environment(NotificationManager.self) private var notifications
     @Environment(\.dismiss) private var dismiss
+    @State private var newKeyword = ""
 
     var body: some View {
         @Bindable var prefs = prefs
@@ -48,6 +49,25 @@ struct SettingsView: View {
                             Task { await notifications.requestAuthorization() }
                             notifications.registerForRemotePush()
                         }
+                    }
+
+                    Section {
+                        ForEach(prefs.highlightKeywords, id: \.self) { word in
+                            Text(word)
+                        }
+                        .onDelete { prefs.removeHighlightKeywords(at: $0) }
+                        HStack {
+                            TextField("Add a word", text: $newKeyword)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .onSubmit(addKeyword)
+                            Button("Add", action: addKeyword)
+                                .disabled(newKeyword.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    } header: {
+                        Text("Highlight keywords")
+                    } footer: {
+                        Text("Also alert you when a message contains any of these words, not just your nick. Case-insensitive.")
                     }
                 }
 
@@ -121,11 +141,16 @@ struct SettingsView: View {
         }
     }
 
+    private func addKeyword() {
+        prefs.addHighlightKeyword(newKeyword)
+        newKeyword = ""
+    }
+
     private var notificationsFooter: String {
         if notifications.authorization == .denied {
             return "Notifications are turned off for Arkhe in iOS Settings. Enable them there to be alerted about mentions and direct messages."
         }
-        return "Get a local alert when someone mentions your nick or sends you a direct message while Arkhe is open or just backgrounded. Push while the app is fully closed is coming."
+        return "Get a local alert when someone mentions your nick or sends you a direct message while Arkhe is open or just backgrounded. For alerts while it's fully closed, turn on Push below."
     }
 
     private var presenceFooter: String {

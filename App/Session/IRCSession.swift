@@ -37,6 +37,11 @@ final class IRCSession: Identifiable {
     /// `ClientStore` to the app's `NotificationManager`.
     var onNotifiableEvent: ((NotifiableEvent) -> Void)?
 
+    /// User-defined highlight words (besides the nick). Supplied as a closure so
+    /// it always reflects current preferences; a message containing any of these
+    /// (case-insensitive) counts as a mention. Wired by `ClientStore`.
+    var highlightKeywords: () -> [String] = { [] }
+
     /// Whether the user wants this session connected. Set on `connect()`, cleared
     /// on an explicit `disconnect()`, so the app can re-dial after iOS drops the
     /// socket during suspension without reviving sessions the user closed.
@@ -56,7 +61,7 @@ final class IRCSession: Identifiable {
     var boundNetworkID: String? { config.boundNetworkID }
 
     /// Whether the connected bouncer offers Web Push (`soju.im/webpush`).
-    var supportsWebPush: Bool { enabledCaps.contains("soju.im/webpush") }
+    var supportsWebPush: Bool { enabledCaps.contains(CapabilityName.webpush) }
 
     /// Invoked once negotiation finishes and the bouncer supports Web Push, so
     /// the app can register a push subscription. Wired by `ClientStore`.
@@ -287,6 +292,25 @@ final class IRCSession: Identifiable {
         echoIfNeeded(body, to: buffer, kind: .message, replyTo: tags["+draft/reply"])
     }
 
+    /// Resolves the buffer to reply into from a notification: an existing channel
+    /// we're in, or a (opened-on-demand) private query. Returns nil for a channel
+    /// we've since left.
+    func replyTarget(named name: String, isChannel: Bool) -> Buffer? {
+        isChannel ? buffer(named: name, kind: .channel, createIfMissing: false)
+                  : openQuery(name)
+    }
+
+    /// Sends `text` as a plain message (no slash-command parsing) — used for quick
+    /// replies typed into a notification. Returns false if we can't send yet.
+    @discardableResult
+    func sendQuickReply(_ text: String, to buffer: Buffer) -> Bool {
+        let body = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !body.isEmpty, buffer.kind != .status, status == .connected else { return false }
+        sendMessage(body, to: buffer)
+        stopTyping(buffer)
+        return true
+    }
+
     /// Parses and runs a `/command`. Unknown commands are reported in status.
     private func runCommand(_ text: String, in buffer: Buffer) {
         let body = text.dropFirst()
@@ -369,6 +393,17 @@ final class IRCSession: Identifiable {
     @discardableResult
     func openQuery(_ nick: String) -> Buffer {
         buffer(named: nick, kind: .query, createIfMissing: true)!
+    }
+
+    /// Fetches the member roster for a channel the first time it's viewed. Under
+    /// `soju.im/no-implicit-names` NAMES isn't pushed on JOIN, so we ask on demand
+    /// — this is what turns the cap into a real bandwidth win on reconnect (no
+    /// roster for channels you never open). A no-op once the list is loaded.
+    func loadMembersIfNeeded(_ buffer: Buffer) {
+        guard buffer.kind == .channel, buffer.isJoined, !buffer.membersLoaded,
+              status == .connected else { return }
+        buffer.membersLoaded = true            // optimistic: avoid duplicate NAMES
+        send(.names(buffer.name))
     }
 
     private func echoIfNeeded(_ text: String, to buffer: Buffer, kind: ChatLine.Kind,
@@ -518,7 +553,7 @@ final class IRCSession: Identifiable {
         if enabledCaps.contains(CapabilityName.bouncerNetworks), config.boundNetworkID == nil {
             send(IRCMessage(command: "BOUNCER", parameters: ["LISTNETWORKS"]))
         }
-        if enabledCaps.contains("soju.im/webpush") { onWebPushReady?() }
+        if enabledCaps.contains(CapabilityName.webpush) { onWebPushReady?() }
     }
 
     /// Registers a Web Push subscription with the bouncer (soju.im/webpush): the
@@ -560,7 +595,11 @@ final class IRCSession: Identifiable {
                 }
             }
         case .endOfNames:
-            break
+            // Marks the roster complete whether NAMES came implicitly (no cap) or
+            // from our lazy request — so we don't re-fetch on the next view.
+            if let channel = message.parameter(1) {
+                buffer(named: channel, kind: .channel, createIfMissing: false)?.membersLoaded = true
+            }
         case .motd, .motdStart, .endOfMotd:
             if let line = message.trailing { addStatus(line, kind: .motd) }
         case .nicknameInUse:
@@ -612,14 +651,14 @@ final class IRCSession: Identifiable {
             replyTo: message.tags["+draft/reply"],
             isHistorical: info?.isHistory ?? false
         )
-        let mentionsMe = body.localizedCaseInsensitiveContains(currentNick)
+        let mentionsMe = isHighlight(body)
         buffer.append(line, markUnread: !isSelf)
         if mentionsMe && !isSelf && !line.isHistorical { buffer.hasMention = true }
         if !isSelf, !isNotice, !line.isHistorical {
             if buffer.kind == .query {
-                emitNotification(.directMessage, buffer: buffer, sender: sender, text: body)
+                emitNotification(.directMessage, buffer: buffer, sender: sender, text: body, msgid: line.msgid)
             } else if mentionsMe {
-                emitNotification(.mention, buffer: buffer, sender: sender, text: body)
+                emitNotification(.mention, buffer: buffer, sender: sender, text: body, msgid: line.msgid)
             }
         }
         // A real message ends any typing indicator from that sender.
@@ -631,6 +670,9 @@ final class IRCSession: Identifiable {
         let buffer = buffer(named: channel, kind: .channel, createIfMissing: true)!
         if isupport.equalIdentifiers(source.nick, currentNick) {
             buffer.isJoined = true
+            // With no-implicit-names the roster arrives only when we ask; a fresh
+            // join invalidates whatever we had, so re-fetch on next view.
+            buffer.membersLoaded = false
             requestHistory(for: buffer)
         } else {
             // extended-join carries `JOIN <channel> <account> :<realname>`.
@@ -816,14 +858,14 @@ final class IRCSession: Identifiable {
             timestamp: ts, sender: sender, text: text, kind: lineKind, isSelf: isSelf,
             account: info.multilineTags["account"], msgid: info.multilineTags["msgid"],
             replyTo: info.multilineTags["+draft/reply"], isHistorical: historical)
-        let mentionsMe = text.localizedCaseInsensitiveContains(currentNick)
+        let mentionsMe = isHighlight(text)
         buffer.append(line, markUnread: !isSelf)
         if mentionsMe && !isSelf && !historical { buffer.hasMention = true }
         if !isSelf, !historical {
             if buffer.kind == .query {
-                emitNotification(.directMessage, buffer: buffer, sender: sender, text: text)
+                emitNotification(.directMessage, buffer: buffer, sender: sender, text: text, msgid: line.msgid)
             } else if mentionsMe {
-                emitNotification(.mention, buffer: buffer, sender: sender, text: text)
+                emitNotification(.mention, buffer: buffer, sender: sender, text: text, msgid: line.msgid)
             }
         }
         if !historical { buffer.typing[sender] = nil }
@@ -1073,13 +1115,22 @@ final class IRCSession: Identifiable {
                             markUnread: false)
     }
 
+    /// Whether `body` should highlight the user: it names their nick or any of
+    /// their configured keywords (case-insensitive).
+    private func isHighlight(_ body: String) -> Bool {
+        if body.localizedCaseInsensitiveContains(currentNick) { return true }
+        return highlightKeywords().contains {
+            !$0.isEmpty && body.localizedCaseInsensitiveContains($0)
+        }
+    }
+
     /// Hands a highlight or direct message to the app's notification layer. The
     /// title is the channel for a mention and the sender for a direct message.
     private func emitNotification(_ kind: NotifiableEvent.Kind, buffer: Buffer,
-                                  sender: String, text: String) {
+                                  sender: String, text: String, msgid: String?) {
         onNotifiableEvent?(NotifiableEvent(
             kind: kind, sessionID: id, bufferID: buffer.id,
             conversation: kind == .mention ? buffer.name : sender,
-            sender: sender, text: text))
+            bufferName: buffer.name, msgid: msgid, sender: sender, text: text))
     }
 }

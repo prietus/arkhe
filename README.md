@@ -50,14 +50,26 @@ push-relay/               Go: content-blind Web Push → APNs relay (stdlib only
 
 ## IRCv3 features
 
-- `message-tags`, `server-time` (real timestamps in history), `batch`
-- `sasl` with **PLAIN** and **EXTERNAL** (CertFP via TLS client certificate)
-- `cap-notify` (CAP NEW/DEL), `echo-message` (local echo only when it isn't active)
-- `account-notify`, `away-notify`, `chghost`, `extended-join`, `multi-prefix`,
-  `userhost-in-names`, `setname`, `invite-notify`
-- `draft/chathistory` — automatic scrollback when joining a channel
+- **Core**: `message-tags`, `server-time` (real timestamps in history), `batch`,
+  `labeled-response`, `cap-notify` (CAP NEW/DEL), `standard-replies` (FAIL/WARN/NOTE)
+- **Auth**: `sasl` with **PLAIN** and **EXTERNAL** (CertFP via TLS client certificate)
+- **Presence & identity**: `account-notify`, `account-tag`, `away-notify`,
+  `chghost`, `extended-join`, `multi-prefix`, `userhost-in-names`, `setname`,
+  `invite-notify`, `echo-message` (local echo only when it isn't active)
+- **History**: `draft/chathistory` — automatic scrollback when joining a channel;
+  `draft/event-playback` — replays joins/parts/topics on reconnect, not just messages
+- **Rich messaging**:
+  - `draft/read-marker` (`MARKREAD`) — read position syncs across every client on
+    the bouncer, so unread counts and the "new messages" divider follow you device
+    to device
+  - `draft/multiline` — sends and renders multi-line messages as a single message
+  - `draft/message-redaction` (`REDACT`) — delete your own messages (or moderate)
+  - `+draft/reply` threaded replies, `+draft/react`/`+draft/unreact` emoji
+    reactions, and `+typing` typing indicators
 - **soju**: `soju.im/bouncer-networks` (+notify) — discovers and lists the
-  bouncer's networks; `soju.im/webpush` — push notifications while the app is closed
+  bouncer's networks; `soju.im/webpush` — push notifications while the app is
+  closed; `soju.im/no-implicit-names` — member rosters fetched lazily, per
+  channel viewed, to save mobile data on reconnect
 
 ## Requirements
 
@@ -99,11 +111,13 @@ Open `Arkhe.xcodeproj` in Xcode to run on a simulator or device.
 
 ## Notifications
 
-**Local** notifications for **mentions** (your nick in a channel) and **direct
-messages**, with per-type toggles, previews and sound in Settings. Alerts are
-suppressed for the conversation you're already viewing. On backgrounding the
-connection is held briefly to catch a last message; on return it reconnects and
-pulls missed scrollback via chathistory.
+**Local** notifications for **mentions** (your nick — or any custom **highlight
+keyword** — in a channel) and **direct messages**, with per-type toggles,
+previews and sound in Settings. **Reply inline** from the notification without
+opening the app; **mute** a noisy conversation's alerts (long-press it in the
+sidebar); alerts are suppressed for the conversation you're already viewing. On
+backgrounding the connection is held briefly to catch a last message; on return
+it reconnects and pulls missed scrollback via chathistory.
 
 **Remote push** for when the app is fully closed uses the bouncer's own Web Push
 (`soju.im/webpush`) — no per-user infrastructure. soju detects the highlight/DM

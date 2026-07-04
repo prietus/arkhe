@@ -171,7 +171,10 @@ private struct ServerSection: View {
 }
 
 private struct BufferRow: View {
+    @Environment(Preferences.self) private var prefs
     let buffer: Buffer
+
+    private var isMuted: Bool { prefs.isMuted(buffer.name) }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -181,14 +184,29 @@ private struct BufferRow: View {
             Text(buffer.name)
                 .lineLimit(1)
             Spacer()
+            if isMuted {
+                Image(systemName: "bell.slash.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             if buffer.unreadCount > 0 {
                 Text("\(buffer.unreadCount)")
                     .font(.caption2.bold())
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(buffer.hasMention ? Color.red : Color.secondary.opacity(0.3),
+                    .background(buffer.hasMention && !isMuted ? Color.red : Color.secondary.opacity(0.3),
                                 in: Capsule())
-                    .foregroundStyle(buffer.hasMention ? .white : .primary)
+                    .foregroundStyle(buffer.hasMention && !isMuted ? .white : .primary)
+            }
+        }
+        .contextMenu {
+            if buffer.kind != .status {
+                Button {
+                    prefs.setMuted(!isMuted, for: buffer.name)
+                } label: {
+                    Label(isMuted ? "Unmute" : "Mute",
+                          systemImage: isMuted ? "bell" : "bell.slash")
+                }
             }
         }
     }

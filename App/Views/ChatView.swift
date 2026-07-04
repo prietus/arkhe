@@ -22,6 +22,8 @@ struct ChatView: View {
     @State private var unreadDividerID: UUID?
     /// The line the user is composing a reply to, if any.
     @State private var replyingTo: ChatLine?
+    /// Debounces follow-to-bottom so a burst of lines scrolls once, not per line.
+    @State private var followTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -131,13 +133,21 @@ struct ChatView: View {
             // view can land at the top of the scrollback.
             .defaultScrollAnchor(.bottom)
             .onChange(of: buffer.lines.count) { old, new in
-                if buffer.isLoadingHistory, let anchor = scrollAnchorID {
-                    // An older page is prepending — keep the user's read position
-                    // pinned. This branch only runs while a load is in flight, so
-                    // a live message can never trigger a jump to the top.
-                    proxy.scrollTo(anchor, anchor: .top)
-                } else if new > old, let last = displayLines.last {
-                    // A live line landed — follow it to the bottom.
+                if buffer.isLoadingHistory {
+                    // An older page is prepending — keep the read position pinned;
+                    // never follow/markRead per line here.
+                    if let anchor = scrollAnchorID { proxy.scrollTo(anchor, anchor: .top) }
+                    return
+                }
+                guard new > old else { return }
+                // Coalesce bursts into a single follow + markRead. A reconnect
+                // replays missed messages as a flood of live lines; doing the work
+                // per line fires the onChange many times per frame and freezes the
+                // UI. Debouncing collapses the flood into one scroll.
+                followTask?.cancel()
+                followTask = Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(50))
+                    guard !Task.isCancelled, let last = displayLines.last else { return }
                     withAnimation(.easeOut(duration: 0.15)) {
                         proxy.scrollTo(last.id, anchor: .bottom)
                     }
@@ -156,7 +166,7 @@ struct ChatView: View {
                 if let last = displayLines.last { proxy.scrollTo(last.id, anchor: .bottom) }
                 session.markRead(buffer)
             }
-            .onDisappear { unreadDividerID = nil; scrollAnchorID = nil }
+            .onDisappear { unreadDividerID = nil; scrollAnchorID = nil; followTask?.cancel() }
         }
     }
 
