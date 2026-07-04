@@ -29,12 +29,20 @@ struct SidebarView: View {
         Binding(
             get: { store.selectedBufferID },
             set: { newValue in
+                // On iPhone the split view collapses to a stack: popping the chat
+                // back to the sidebar clears the selection to nil. Mirror that into
+                // the store, otherwise it keeps thinking the buffer is still
+                // selected and tapping the same row again is a no-op — you'd have to
+                // pick a different chat first before you could re-enter this one.
+                guard let id = newValue else {
+                    store.selectedBufferID = nil
+                    return
+                }
                 // Always resolve the session that actually owns this buffer. Don't
                 // prefer the currently-selected session — picking a channel in a
                 // second network would otherwise resolve against the wrong session,
                 // find no matching buffer, and silently do nothing.
-                guard let id = newValue,
-                      let session = store.sessions.values.first(where: { s in
+                guard let session = store.sessions.values.first(where: { s in
                           s.buffers.contains { $0.id == id }
                       }),
                       let buffer = session.buffers.first(where: { $0.id == id }) else { return }
