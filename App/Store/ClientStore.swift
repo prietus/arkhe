@@ -45,7 +45,7 @@ final class ClientStore {
             select(existing.statusBuffer, in: existing)
             return
         }
-        let baseConfig = sessions[base.id]?.config ?? SessionConfig(base)
+        let baseConfig = sessions[base.id]?.config ?? SessionConfig(base, clientName: preferences.sojuClientName)
         let session = makeSession(SessionConfig(boundNetwork: network, base: baseConfig))
         sessions[session.id] = session
         networkSessions[base.id, default: []].append(session)
@@ -64,7 +64,7 @@ final class ClientStore {
     @discardableResult
     func session(for config: ServerConfig) -> IRCSession {
         if let existing = sessions[config.id] { return existing }
-        let session = makeSession(SessionConfig(config))
+        let session = makeSession(SessionConfig(config, clientName: preferences.sojuClientName))
         sessions[config.id] = session
         return session
     }
@@ -89,7 +89,7 @@ final class ClientStore {
         let session = session(for: config)
         // Pick up any edits made since the session was first created — otherwise
         // a reused, offline session would reconnect to the old host/port/TLS.
-        session.refreshConfig(SessionConfig(config))
+        session.refreshConfig(SessionConfig(config, clientName: preferences.sojuClientName))
         session.connect()
         selectedSessionID = config.id
         if selectedBufferID == nil {

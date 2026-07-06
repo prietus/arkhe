@@ -131,10 +131,20 @@ final class Buffer: Identifiable {
     var historyExhausted: Bool = false
     /// Live typing state (+typing client tag): nick → last "active" instant.
     var typing: [String: Date] = [:]
+    /// Server msgids already in `lines`, so a duplicate delivery (reconnect
+    /// catch-up overlap, event-playback replay, multi-batch) is dropped instead
+    /// of shown twice.
+    private var seenMsgIDs: Set<String> = []
 
     init(name: String, kind: Kind) {
         self.name = name
         self.kind = kind
+    }
+
+    /// Timestamp of the newest real (msgid-bearing) message — the boundary a
+    /// reconnect uses to catch up via `CHATHISTORY AFTER`.
+    var newestMessageTimestamp: Date? {
+        lines.last(where: { $0.msgid != nil })?.timestamp
     }
 
     var sortedMembers: [Member] {
@@ -146,6 +156,11 @@ final class Buffer: Identifiable {
     }
 
     func append(_ line: ChatLine, markUnread: Bool) {
+        // Drop anything we already hold, keyed on the stable server msgid: a
+        // reconnect catch-up page overlaps what we have, event-playback can replay
+        // a live line, and a message may be delivered under more than one batch.
+        // Lines without a msgid (local status, presence events) always append.
+        if let mid = line.msgid, !seenMsgIDs.insert(mid).inserted { return }
         // History lines slot into timestamp order; live lines append. A history
         // page (LATEST/BEFORE) arrives oldest-first, so we insert before the
         // first strictly-newer line — this keeps each page a contiguous, ordered

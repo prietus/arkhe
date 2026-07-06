@@ -89,12 +89,20 @@ final class IRCSession: Identifiable {
     private var pendingLabels: [String: String] = [:]
     /// Open `labeled-response` batches: batch ref → its label.
     private var labeledBatches: [String: String] = [:]
+    /// Channels with a reconnect catch-up (`CHATHISTORY AFTER`) request in flight,
+    /// so its incoming batch can be told apart from an initial/scroll-up page.
+    private var catchUpTargets: Set<String> = []
 
     private struct BatchInfo {
         var type: String
         var target: String?
         var isHistory: Bool
         var messageCount: Int = 0
+        /// A reconnect catch-up page (`CHATHISTORY AFTER` our newest message),
+        /// not an initial `LATEST` or a scroll-up `BEFORE`. A short catch-up page
+        /// means "we're up to date", NOT "reached the start", so it must not set
+        /// `historyExhausted`.
+        var isCatchUp: Bool = false
         /// The enclosing batch (e.g. a chathistory batch a multiline sits in).
         var parentRef: String?
         // draft/multiline accumulation: the message's whole-message tags/source
@@ -771,6 +779,10 @@ final class IRCSession: Identifiable {
             let type = message.parameter(1) ?? ""
             let isHistory = type == "chathistory"
             var info = BatchInfo(type: type, target: message.parameter(2), isHistory: isHistory)
+            if isHistory, let target = info.target,
+               catchUpTargets.contains(where: { isupport.equalIdentifiers($0, target) }) {
+                info.isCatchUp = true
+            }
             if type == CapabilityName.multiline {
                 // Whole-message tags (msgid/time/account) and the sender ride on
                 // the opening BATCH; remember the enclosing batch for history.
@@ -797,8 +809,15 @@ final class IRCSession: Identifiable {
                                    kind: isupport.isChannel(target) ? .channel : .query,
                                    createIfMissing: false) {
                 buffer.isLoadingHistory = false
-                // A short page means we've reached the start of history.
-                if info.messageCount < Self.historyPageSize { buffer.historyExhausted = true }
+                // A short LATEST/BEFORE page means we've reached the start of
+                // history; a short catch-up (AFTER) page just means we're up to
+                // date, so keep the "load older" affordance alive.
+                if !info.isCatchUp, info.messageCount < Self.historyPageSize {
+                    buffer.historyExhausted = true
+                }
+                if info.isCatchUp {
+                    catchUpTargets = catchUpTargets.filter { !isupport.equalIdentifiers($0, target) }
+                }
                 buffer.recomputeUnread()
             }
             openBatches[ref] = nil
@@ -921,11 +940,25 @@ final class IRCSession: Identifiable {
     }
 
     private func requestHistory(for buffer: Buffer) {
-        guard enabledCaps.contains(CapabilityName.chathistory), !buffer.loadedHistory else { return }
-        buffer.loadedHistory = true
-        buffer.isLoadingHistory = true
-        send(IRCMessage(command: "CHATHISTORY",
-                        parameters: ["LATEST", buffer.name, "*", "\(Self.historyPageSize)"]))
+        guard enabledCaps.contains(CapabilityName.chathistory) else { return }
+        if !buffer.loadedHistory {
+            // First view of this channel: pull the most recent page.
+            buffer.loadedHistory = true
+            buffer.isLoadingHistory = true
+            send(IRCMessage(command: "CHATHISTORY",
+                            parameters: ["LATEST", buffer.name, "*", "\(Self.historyPageSize)"]))
+        } else if let newest = buffer.newestMessageTimestamp {
+            // Reconnect (soju re-JOINs us): we already hold this channel's
+            // scrollback but were suspended for a while. soju doesn't auto-replay
+            // backlog to chathistory-capable clients, so pull everything since our
+            // newest message. Overlap / double-delivery is dropped by msgid in
+            // `Buffer.append`.
+            buffer.isLoadingHistory = true
+            catchUpTargets.insert(buffer.name)
+            let selector = "timestamp=\(Self.timeFormatter.string(from: newest))"
+            send(IRCMessage(command: "CHATHISTORY",
+                            parameters: ["AFTER", buffer.name, selector, "\(Self.historyPageSize)"]))
+        }
     }
 
     /// Pulls an older page of scrollback (draft/chathistory `BEFORE`). Triggered

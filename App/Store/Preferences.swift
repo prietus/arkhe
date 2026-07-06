@@ -98,6 +98,13 @@ final class Preferences {
     /// shared relay; self-hosters can point this at their own.
     var pushRelayURL: String           { didSet { d.set(pushRelayURL, forKey: K.pushRelay) } }
 
+    /// A stable, per-install client name sent to soju as the `@client` username
+    /// suffix. soju keeps a separate message buffer and replay cursor per client
+    /// name, so this lets the bouncer replay exactly what *this device* missed on
+    /// reconnect, independent of your other clients (desktop, etc.). Generated
+    /// once and persisted; a fresh install gets a new one.
+    let sojuClientName: String
+
     private let d = UserDefaults.standard
 
     private enum K {
@@ -115,6 +122,7 @@ final class Preferences {
         static let muted        = "pref.mutedConversations"
         static let pushEnabled  = "pref.remotePushEnabled"
         static let pushRelay    = "pref.pushRelayURL"
+        static let clientName   = "pref.sojuClientName"
     }
 
     static let defaultRelayURL = "https://push.arkhe.priet.us"
@@ -135,5 +143,12 @@ final class Preferences {
         mutedConversations = Set(d.stringArray(forKey: K.muted) ?? [])
         remotePushEnabled = d.object(forKey: K.pushEnabled) as? Bool ?? false
         pushRelayURL = d.string(forKey: K.pushRelay) ?? Self.defaultRelayURL
+        if let saved = d.string(forKey: K.clientName), !saved.isEmpty {
+            sojuClientName = saved
+        } else {
+            let generated = "arkhe-" + UUID().uuidString.prefix(6).lowercased()
+            d.set(generated, forKey: K.clientName)
+            sojuClientName = generated
+        }
     }
 }

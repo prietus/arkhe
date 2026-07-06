@@ -31,7 +31,7 @@ struct SessionConfig: Sendable, Identifiable {
     /// The control/account session leaves this `nil`.
     var boundNetworkID: String?
 
-    init(_ config: ServerConfig) {
+    init(_ config: ServerConfig, clientName: String? = nil) {
         id = config.id
         name = config.name
         host = config.host
@@ -39,10 +39,17 @@ struct SessionConfig: Sendable, Identifiable {
         useTLS = config.useTLS
         allowInvalidCertificates = config.allowInvalidCertificates
         nickname = config.nickname
-        username = config.username.isEmpty ? config.nickname : config.username
+        // soju keys its per-client history buffers on an `@<client>` username
+        // suffix (see soju's unmarshalUsername); a stable per-device name lets it
+        // replay exactly what this device missed on reconnect, independent of
+        // other clients. Only for a bouncer — a plain IRC network would read the
+        // suffix as a literal account and reject SASL. The `/network` binding, if
+        // any, is added later and coexists (soju accepts user@client/network).
+        let clientSuffix = config.isBouncer ? (clientName.map { "@\($0)" } ?? "") : ""
+        username = (config.username.isEmpty ? config.nickname : config.username) + clientSuffix
         realName = config.realName.isEmpty ? config.nickname : config.realName
         saslMode = config.saslMode
-        saslAccount = config.saslAccount.isEmpty ? config.nickname : config.saslAccount
+        saslAccount = (config.saslAccount.isEmpty ? config.nickname : config.saslAccount) + clientSuffix
         saslPassword = config.saslPassword
         serverPassword = config.serverPassword
         isBouncer = config.isBouncer
