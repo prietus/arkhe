@@ -87,6 +87,8 @@ struct Member: Identifiable, Sendable, Hashable {
     var realname: String? = nil
     /// IRCv3 Bot Mode: the account is flagged as a bot.
     var isBot: Bool = false
+    /// IRCv3 away-notify: the user is marked /away on the server.
+    var isAway: Bool = false
     var id: String { nick }
 
     /// Sort key: ops first, then voiced, then by nick (case-insensitive).
@@ -220,6 +222,12 @@ final class Buffer: Identifiable {
     /// Flags (or unflags) a member as a bot across this buffer's roster.
     func setBot(_ nick: String, _ value: Bool, equals: (String, String) -> Bool) {
         if let i = members.firstIndex(where: { equals($0.nick, nick) }) { members[i].isBot = value }
+    }
+
+    /// Marks (or clears) a member as away across this buffer's roster
+    /// (IRCv3 away-notify).
+    func setAway(_ nick: String, _ value: Bool, equals: (String, String) -> Bool) {
+        if let i = members.firstIndex(where: { equals($0.nick, nick) }) { members[i].isAway = value }
     }
 
     /// Marks the message with `msgid` as redacted (draft/message-redaction).

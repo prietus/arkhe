@@ -119,6 +119,10 @@ final class IRCSession: Identifiable {
     /// How many messages we ask for per chathistory page.
     private static let historyPageSize = 100
 
+    /// WHOX query-type token echoed back in the `t` field, so we only act on WHO
+    /// replies we asked for (not ones triggered by a user `/whois`).
+    private static let whoxToken = "742"
+
     private static let timeFormatter: ISO8601DateFormatter = {
         let f = ISO8601DateFormatter()
         f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -412,6 +416,15 @@ final class IRCSession: Identifiable {
               status == .connected else { return }
         buffer.membersLoaded = true            // optimistic: avoid duplicate NAMES
         send(.names(buffer.name))
+        // A single WHO alongside NAMES enriches the roster in one shot: the flags
+        // field yields initial away state (H/G) and channel-wide bot mode (+B)
+        // without a WHOIS per nick. Prefer WHOX (richer, carries the account) when
+        // the server advertises it; fall back to plain WHO otherwise.
+        if isupport.tokens["WHOX"] != nil {
+            send(IRCMessage(command: "WHO", parameters: [buffer.name, "%tcuhnfar,\(Self.whoxToken)"]))
+        } else {
+            send(IRCMessage(command: "WHO", parameters: [buffer.name]))
+        }
     }
 
     private func echoIfNeeded(_ text: String, to buffer: Buffer, kind: ChatLine.Kind,
@@ -514,6 +527,10 @@ final class IRCSession: Identifiable {
             handleQuit(message)
         case "NICK":
             handleNick(message)
+        case "AWAY":
+            handleAway(message)
+        case "CAP":
+            handleCapChange(message)
         case "SETNAME":
             handleSetname(message)
         case "TOPIC":
@@ -564,6 +581,39 @@ final class IRCSession: Identifiable {
         if enabledCaps.contains(CapabilityName.webpush) { onWebPushReady?() }
     }
 
+    /// cap-notify runtime changes. Once registration finishes the negotiator is a
+    /// spent state machine — routing a later ACK through it would emit a stray
+    /// `CAP END` (invalid post-registration) or restart SASL — so `CAP NEW/DEL/
+    /// ACK/NAK` arriving mid-connection are handled here, keeping `enabledCaps` in
+    /// sync as caps appear or disappear (e.g. when a soju network attaches).
+    private func handleCapChange(_ message: IRCMessage) {
+        // During registration, handle() already feeds every message (CAP included)
+        // to the negotiator; only act once it's done to avoid a double request.
+        guard negotiator.isFinished, message.parameters.count >= 2 else { return }
+        switch message.parameters[1].uppercased() {
+        case "NEW":
+            // Request newly-offered caps we want and don't already hold. SASL is
+            // excluded: we never re-authenticate on a live connection.
+            let wanted = capabilityNames(in: message.parameter(2)).filter {
+                $0 != CapabilityName.sasl && config.desiredCaps.contains($0)
+                    && !enabledCaps.contains($0)
+            }
+            if !wanted.isEmpty { send(.capReq(wanted.sorted())) }
+        case "ACK":
+            for name in capabilityNames(in: message.parameter(2)) { enabledCaps.insert(name) }
+        case "DEL":
+            for name in capabilityNames(in: message.parameter(2)) { enabledCaps.remove(name) }
+        default:
+            break   // NAK: the server refused; nothing was enabled
+        }
+    }
+
+    /// Splits a `CAP` capability-list parameter into bare names, dropping any
+    /// `=value` suffix (e.g. `sasl=PLAIN` → `sasl`).
+    private func capabilityNames(in list: String?) -> [String] {
+        (list ?? "").split(separator: " ").map { String($0.split(separator: "=").first ?? $0) }
+    }
+
     /// Registers a Web Push subscription with the bouncer (soju.im/webpush): the
     /// bouncer will POST encrypted highlight/DM notifications to `endpoint`.
     func registerWebPush(endpoint: String, p256dh: String, auth: String) {
@@ -595,6 +645,10 @@ final class IRCSession: Identifiable {
             }
         case .namReply:
             handleNamesReply(message)
+        case .whoReply:
+            handleWhoReply(message)
+        case .whoSpcRpl:
+            handleWhoxReply(message)
         case .whoisBot:
             // RPL_WHOISBOT <me> <nick> :is a bot — flag them across rosters.
             if let nick = message.parameter(1) {
@@ -731,6 +785,17 @@ final class IRCSession: Identifiable {
         }
     }
 
+    /// away-notify: `:<nick> AWAY :<reason>` marks the user away, a bare
+    /// `:<nick> AWAY` marks them back. Reflected as a dimmed roster entry; we
+    /// don't add a chat line (away churn is noisier than joins/parts).
+    private func handleAway(_ message: IRCMessage) {
+        guard let source = message.source else { return }
+        let isAway = !message.parameters.isEmpty
+        for buffer in buffers where buffer.kind == .channel {
+            buffer.setAway(source.nick, isAway) { isupport.equalIdentifiers($0, $1) }
+        }
+    }
+
     private func handleTopic(_ message: IRCMessage) {
         guard let channel = message.first,
               let buffer = buffer(named: channel, kind: .channel, createIfMissing: false) else { return }
@@ -768,6 +833,41 @@ final class IRCSession: Identifiable {
             guard !nick.isEmpty else { continue }
             addMember(Member(nick: nick, prefix: prefix, account: nil), to: buffer, replacePrefix: true)
         }
+    }
+
+    /// Plain `WHO` reply (RPL_WHOREPLY): `<me> <channel> <user> <host> <server>
+    /// <nick> <flags> :<hops> <realname>`.
+    private func handleWhoReply(_ message: IRCMessage) {
+        guard let channel = message.parameter(1), let nick = message.parameter(5),
+              let flags = message.parameter(6),
+              let buffer = buffer(named: channel, kind: .channel, createIfMissing: false) else { return }
+        applyWhoFlags(flags, toNick: nick, in: buffer, account: nil)
+    }
+
+    /// WHOX reply (RPL_WHOSPCRPL) for our `%tcuhnfar` query: `<me> <token>
+    /// <channel> <user> <host> <nick> <flags> <account> :<realname>`. Same
+    /// enrichment as `handleWhoReply` plus the services account (`0` = none).
+    private func handleWhoxReply(_ message: IRCMessage) {
+        guard message.parameter(1) == Self.whoxToken,
+              let channel = message.parameter(2), let nick = message.parameter(5),
+              let flags = message.parameter(6),
+              let buffer = buffer(named: channel, kind: .channel, createIfMissing: false) else { return }
+        let account = message.parameter(7).flatMap { $0 == "0" ? nil : $0 }
+        applyWhoFlags(flags, toNick: nick, in: buffer, account: account)
+    }
+
+    /// Interprets a WHO/WHOX flags field — `H` here / `G` gone(away), `B` bot —
+    /// and updates the member (adding a bare entry if WHO outran NAMES). Away is
+    /// set both ways (away-notify keeps it live after); bot is only ever set, so a
+    /// server that omits `B` from WHO can't clear a flag a WHOIS established.
+    private func applyWhoFlags(_ flags: String, toNick nick: String, in buffer: Buffer, account: String?) {
+        if let account, !account.isEmpty {
+            addMember(Member(nick: nick, prefix: nil, account: account), to: buffer)
+        } else if !buffer.members.contains(where: { isupport.equalIdentifiers($0.nick, nick) }) {
+            addMember(Member(nick: nick, prefix: nil, account: nil), to: buffer)
+        }
+        buffer.setAway(nick, flags.hasPrefix("G")) { isupport.equalIdentifiers($0, $1) }
+        if flags.contains("B") { buffer.setBot(nick, true) { isupport.equalIdentifiers($0, $1) } }
     }
 
     // MARK: - Batches & soju extensions

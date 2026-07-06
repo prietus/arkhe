@@ -25,6 +25,14 @@ struct MemberListView: View {
                                 .lineLimit(1)
                         }
                     }
+                    // away-notify: dim the whole entry and mark it with a moon.
+                    .opacity(member.isAway ? 0.45 : 1)
+                    if member.isAway {
+                        Image(systemName: "moon.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Away")
+                    }
                     if member.isBot {
                         Text("BOT")
                             .font(.caption2.weight(.bold))
