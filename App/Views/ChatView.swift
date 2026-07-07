@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 /// The conversation pane: scrollback, topic, member list (channels) and the
 /// compose bar.
@@ -22,6 +23,8 @@ struct ChatView: View {
     @State private var unreadDividerID: UUID?
     /// The line the user is composing a reply to, if any.
     @State private var replyingTo: ChatLine?
+    /// The line being reacted to via the full emoji-keyboard picker, if any.
+    @State private var reactingTo: ChatLine?
     /// Debounces follow-to-bottom so a burst of lines scrolls once, not per line.
     @State private var followTask: Task<Void, Never>?
 
@@ -95,6 +98,12 @@ struct ChatView: View {
                 .navigationBarTitleDisplayMode(.inline)
             }
             .presentationDetents([.medium, .large])
+        }
+        .sheet(item: $reactingTo) { line in
+            EmojiReactSheet { emoji in
+                session.toggleReaction(emoji, to: line, in: buffer)
+            }
+            .presentationDetents([.height(160)])
         }
     }
 
@@ -304,12 +313,17 @@ struct ChatView: View {
     @ViewBuilder private func lineMenu(_ line: ChatLine) -> some View {
         if line.kind == .message || line.kind == .action {
             if session.networkAllowsReactions {
-                Menu {
-                    ForEach(["👍", "❤️", "😂", "🎉", "🤔", "👀", "🔥", "✅"], id: \.self) { emoji in
-                        Button(emoji) { session.toggleReaction(emoji, to: line, in: buffer) }
+                // Flat emoji buttons: each is its own full-width menu row, so every
+                // one is a reliable tap target. The nested `Menu` submenu and a
+                // `ControlGroup` palette both proved fiddly/broken to tap here.
+                ForEach(["👍", "❤️", "😂", "🎉", "🤔", "👀", "🔥", "✅"], id: \.self) { emoji in
+                    Button { session.toggleReaction(emoji, to: line, in: buffer) } label: {
+                        Text("React \(emoji)")
                     }
-                } label: {
-                    Label("React", systemImage: "face.smiling")
+                }
+                // Any other emoji, via a sheet that opens the emoji keyboard.
+                Button { reactingTo = line } label: {
+                    Label("React…", systemImage: "face.smiling")
                 }
             } else {
                 Button {} label: {
@@ -321,6 +335,11 @@ struct ChatView: View {
                 replyingTo = line
             } label: {
                 Label("Reply", systemImage: "arrowshape.turn.up.left")
+            }
+            Button {
+                UIPasteboard.general.string = line.text
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
             }
             if line.isSelf, line.msgid != nil, !line.redacted, session.networkAllowsRedaction {
                 Button(role: .destructive) {
@@ -378,6 +397,76 @@ struct ChatView: View {
         case 1:  return "\(nicks[0]) is typing…"
         case 2:  return "\(nicks[0]) and \(nicks[1]) are typing…"
         default: return "Several people are typing…"
+        }
+    }
+}
+
+/// Small sheet for reacting with any emoji: a single field that opens straight
+/// on the system emoji keyboard; the first character typed is the reaction.
+private struct EmojiReactSheet: View {
+    let onPick: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Text("React with any emoji")
+                .font(.headline)
+            EmojiKeyboardField(text: $text)
+                .frame(width: 84, height: 48)
+        }
+        .padding(.top, 24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onChange(of: text) { _, newValue in
+            guard let emoji = newValue.trimmingCharacters(in: .whitespacesAndNewlines).first
+            else { return }
+            onPick(String(emoji))
+            dismiss()
+        }
+    }
+}
+
+/// A text field that opens directly on the emoji keyboard (when installed) by
+/// overriding its input mode — there is no public "emoji keyboard" API, but
+/// UIKit honours a field whose `textInputMode` resolves to the emoji mode.
+private struct EmojiKeyboardField: UIViewRepresentable {
+    @Binding var text: String
+
+    final class Coordinator: NSObject {
+        var text: Binding<String>
+        var didFocus = false
+        init(text: Binding<String>) { self.text = text }
+        @objc func changed(_ field: UITextField) { text.wrappedValue = field.text ?? "" }
+    }
+
+    final class Field: UITextField {
+        // A stable identifier lets iOS remember the chosen input mode per field.
+        override var textInputContextIdentifier: String? { "im.arkhe.emojiPicker" }
+        override var textInputMode: UITextInputMode? {
+            UITextInputMode.activeInputModes.first { $0.primaryLanguage == "emoji" }
+                ?? super.textInputMode
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
+
+    func makeUIView(context: Context) -> UITextField {
+        let field = Field()
+        field.placeholder = "😀"
+        field.textAlignment = .center
+        field.font = .systemFont(ofSize: 30)
+        field.borderStyle = .roundedRect
+        field.addTarget(context.coordinator, action: #selector(Coordinator.changed),
+                        for: .editingChanged)
+        return field
+    }
+
+    func updateUIView(_ field: UITextField, context: Context) {
+        field.text = text
+        // Pop the keyboard once, when the sheet first lays out.
+        if !context.coordinator.didFocus {
+            context.coordinator.didFocus = true
+            DispatchQueue.main.async { field.becomeFirstResponder() }
         }
     }
 }

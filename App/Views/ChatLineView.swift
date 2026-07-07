@@ -72,9 +72,11 @@ struct ChatLineView: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 // Nick and text flow inline on one wrapping line, IRC-style.
+                // NB: no `.textSelection(.enabled)` here — its long-press competes
+                // with the row's `.contextMenu`, so a press selected the whole
+                // message instead of opening the menu. Copy lives in the menu.
                 lineText
                     .font(.body)
-                    .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 if autoLoadMedia { mediaAttachments }
                 if !line.reactions.isEmpty && !line.redacted { reactionChips }

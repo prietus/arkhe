@@ -8,11 +8,19 @@ Written in Swift 6 + SwiftUI, with a pure, tested protocol core.
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/chat.png" width="30%" alt="Channel view with inline link previews and a multi-network sidebar">
+  <img src="docs/screenshots/iphone-chat.png" width="30%" alt="Channel view with inline image previews">
   &nbsp;
-  <img src="docs/screenshots/settings.png" width="30%" alt="Display and privacy settings">
+  <img src="docs/screenshots/iphone-members.png" width="30%" alt="Member list with away status and bot badges">
   &nbsp;
-  <img src="docs/screenshots/console.png" width="30%" alt="Raw IRCv3 protocol console for debugging">
+  <img src="docs/screenshots/iphone-context-menu.png" width="30%" alt="Message context menu with reply, copy and capability-aware reactions">
+</p>
+<p align="center">
+  <img src="docs/screenshots/ipad-reactions.png" width="48%" alt="Emoji reactions from the message context menu on iPad">
+  &nbsp;
+  <img src="docs/screenshots/ipad-chat.png" width="48%" alt="iPad split view with link previews and photo/file attachments">
+</p>
+<p align="center">
+  <img src="docs/screenshots/ipad-settings.png" width="48%" alt="Display, media and custom uploader settings">
 </p>
 
 ## Architecture

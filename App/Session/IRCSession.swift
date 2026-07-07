@@ -250,7 +250,7 @@ final class IRCSession: Identifiable {
     }
 
     /// Sends user-typed text. A leading `/` runs a command (`//` escapes it to a
-    /// literal message); otherwise it's a PRIVMSG with optional `+draft/reply`.
+    /// literal message); otherwise it's a PRIVMSG with an optional `+reply` tag.
     func sendText(_ text: String, to buffer: Buffer, replyingTo replyLine: ChatLine? = nil) {
         guard !text.isEmpty else { return }
         if text.hasPrefix("/"), !text.hasPrefix("//") {
@@ -272,7 +272,11 @@ final class IRCSession: Identifiable {
     /// network supports it, otherwise as one PRIVMSG per line.
     private func sendMessage(_ body: String, to buffer: Buffer, replyTo: String? = nil) {
         var tags: [String: String] = [:]
-        if let replyTo { tags["+draft/reply"] = replyTo }
+        // Send both the ratified `+reply` and the legacy `+draft/reply`: the
+        // deployed ecosystem (goguma et al.) still keys on the draft name, while
+        // spec-compliant clients read `+reply`. A few extra bytes buys interop
+        // with both during the transition.
+        if let replyTo { tags["+reply"] = replyTo; tags["+draft/reply"] = replyTo }
 
         if body.contains("\n") {
             if enabledCaps.contains(CapabilityName.multiline) {
@@ -301,7 +305,7 @@ final class IRCSession: Identifiable {
                             parameters: [buffer.name, String(line)]))
         }
         send(.batchClose(ref))
-        echoIfNeeded(body, to: buffer, kind: .message, replyTo: tags["+draft/reply"])
+        echoIfNeeded(body, to: buffer, kind: .message, replyTo: tags["+reply"])
     }
 
     /// Resolves the buffer to reply into from a notification: an existing channel
@@ -489,15 +493,17 @@ final class IRCSession: Identifiable {
     }
 
     /// Toggles our `emoji` reaction on `line`: adds it via `+draft/react`, or
-    /// removes it via `+draft/unreact` if we'd already reacted (both carry the
-    /// target msgid in `+draft/reply`).
+    /// removes it via `+draft/unreact` if we'd already reacted. The target msgid
+    /// rides on both `+reply` (ratified, per the react spec) and the legacy
+    /// `+draft/reply`, so clients keying on either name correlate the reaction.
     func toggleReaction(_ emoji: String, to line: ChatLine, in buffer: Buffer) {
         guard let msgid = line.msgid, enabledCaps.contains(CapabilityName.messageTags) else { return }
         let mine = buffer.hasReaction(emoji, onMsgID: msgid, from: currentNick)
         let tag = mine ? "+draft/unreact" : "+draft/react"
-        send(.tagmsg(buffer.name, tags: ["+draft/reply": msgid, tag: emoji]))
-        // Echo locally unless the server will echo the TAGMSG back to us.
-        guard !enabledCaps.contains(CapabilityName.echoMessage) else { return }
+        send(.tagmsg(buffer.name, tags: ["+reply": msgid, "+draft/reply": msgid, tag: emoji]))
+        // Apply locally right away — instant feedback, and not every server echoes
+        // TAGMSG back even with echo-message. Reactions are keyed (emoji, nick) so
+        // a later echo or history replay of the same toggle is a no-op.
         if mine { buffer.removeReaction(emoji, fromMsgID: msgid, by: currentNick) }
         else { buffer.addReaction(emoji, toMsgID: msgid, from: currentNick) }
     }
@@ -710,7 +716,7 @@ final class IRCSession: Identifiable {
             isSelf: isSelf,
             account: message.tags["account"],
             msgid: message.tags["msgid"],
-            replyTo: message.tags["+draft/reply"],
+            replyTo: replyRef(message.tags),
             isHistorical: info?.isHistory ?? false
         )
         let mentionsMe = isHighlight(body)
@@ -730,7 +736,13 @@ final class IRCSession: Identifiable {
     private func handleJoin(_ message: IRCMessage) {
         guard let channel = message.first, let source = message.source else { return }
         let buffer = buffer(named: channel, kind: .channel, createIfMissing: true)!
+        // A JOIN replayed inside a chathistory batch (event-playback) is an OLD
+        // event: it must not mutate live state. Treating a replayed self-JOIN as
+        // real re-requested catch-up, whose page contained that same JOIN again —
+        // an exponential CHATHISTORY request loop that flooded the connection.
+        let historical = batchInfo(for: message)?.isHistory ?? false
         if isupport.equalIdentifiers(source.nick, currentNick) {
+            guard !historical else { return }
             buffer.isJoined = true
             // With no-implicit-names the roster arrives only when we ask; a fresh
             // join invalidates whatever we had, so re-fetch on next view.
@@ -740,47 +752,63 @@ final class IRCSession: Identifiable {
             // extended-join carries `JOIN <channel> <account> :<realname>`.
             let account = message.parameter(1).flatMap { $0 == "*" ? nil : $0 } ?? message.tags["account"]
             let realname = message.parameters.count >= 3 ? message.trailing : nil
-            addMember(Member(nick: source.nick, prefix: nil, account: account, realname: realname), to: buffer)
+            if !historical {
+                addMember(Member(nick: source.nick, prefix: nil, account: account, realname: realname), to: buffer)
+            }
+            // Carry the msgid so a replayed join dedups instead of stacking up.
             buffer.append(ChatLine(timestamp: timestamp(from: message), sender: nil,
                                    text: "\(source.nick) joined", kind: .event,
-                                   presence: .join, presenceNick: source.nick), markUnread: false)
+                                   msgid: message.tags["msgid"],
+                                   presence: .join, presenceNick: source.nick,
+                                   isHistorical: historical), markUnread: false)
         }
     }
 
     private func handlePart(_ message: IRCMessage) {
         guard let channel = message.first, let source = message.source,
               let buffer = buffer(named: channel, kind: .channel, createIfMissing: false) else { return }
+        // Replayed PARTs (chathistory/event-playback) are old news: they must not
+        // flip isJoined or evict current members — only show as scrollback.
+        let historical = batchInfo(for: message)?.isHistory ?? false
         if isupport.equalIdentifiers(source.nick, currentNick) {
-            buffer.isJoined = false
+            if !historical { buffer.isJoined = false }
         } else {
-            removeMember(source.nick, from: buffer)
+            if !historical { removeMember(source.nick, from: buffer) }
             buffer.append(ChatLine(timestamp: timestamp(from: message), sender: nil,
                                    text: "\(source.nick) left", kind: .event,
-                                   presence: .part, presenceNick: source.nick), markUnread: false)
+                                   msgid: message.tags["msgid"],
+                                   presence: .part, presenceNick: source.nick,
+                                   isHistorical: historical), markUnread: false)
         }
     }
 
     private func handleQuit(_ message: IRCMessage) {
         guard let source = message.source else { return }
+        let historical = batchInfo(for: message)?.isHistory ?? false
         for buffer in buffers where buffer.kind == .channel {
             if buffer.members.contains(where: { isupport.equalIdentifiers($0.nick, source.nick) }) {
-                removeMember(source.nick, from: buffer)
+                if !historical { removeMember(source.nick, from: buffer) }
                 buffer.append(ChatLine(timestamp: timestamp(from: message), sender: nil,
                                        text: "\(source.nick) quit", kind: .event,
-                                       presence: .quit, presenceNick: source.nick), markUnread: false)
+                                       msgid: message.tags["msgid"],
+                                       presence: .quit, presenceNick: source.nick,
+                                       isHistorical: historical), markUnread: false)
             }
         }
     }
 
     private func handleNick(_ message: IRCMessage) {
         guard let source = message.source, let newNick = message.first else { return }
-        if isupport.equalIdentifiers(source.nick, currentNick) { currentNick = newNick }
+        let historical = batchInfo(for: message)?.isHistory ?? false
+        if !historical, isupport.equalIdentifiers(source.nick, currentNick) { currentNick = newNick }
         for buffer in buffers where buffer.kind == .channel {
             if let idx = buffer.members.firstIndex(where: { isupport.equalIdentifiers($0.nick, source.nick) }) {
-                buffer.members[idx].nick = newNick
+                if !historical { buffer.members[idx].nick = newNick }
                 buffer.append(ChatLine(timestamp: timestamp(from: message), sender: nil,
                                        text: "\(source.nick) is now \(newNick)", kind: .event,
-                                       presence: .nick, presenceNick: newNick), markUnread: false)
+                                       msgid: message.tags["msgid"],
+                                       presence: .nick, presenceNick: newNick,
+                                       isHistorical: historical), markUnread: false)
             }
         }
     }
@@ -976,7 +1004,7 @@ final class IRCSession: Identifiable {
         let line = ChatLine(
             timestamp: ts, sender: sender, text: text, kind: lineKind, isSelf: isSelf,
             account: info.multilineTags["account"], msgid: info.multilineTags["msgid"],
-            replyTo: info.multilineTags["+draft/reply"], isHistorical: historical)
+            replyTo: replyRef(info.multilineTags), isHistorical: historical)
         let mentionsMe = isHighlight(text)
         buffer.append(line, markUnread: !isSelf)
         if mentionsMe && !isSelf && !historical { buffer.hasMention = true }
@@ -1041,6 +1069,9 @@ final class IRCSession: Identifiable {
 
     private func requestHistory(for buffer: Buffer) {
         guard enabledCaps.contains(CapabilityName.chathistory) else { return }
+        // One request at a time per buffer: overlapping catch-ups compounded into
+        // a request flood when something re-triggered this mid-flight.
+        guard !buffer.isLoadingHistory else { return }
         if !buffer.loadedHistory {
             // First view of this channel: pull the most recent page.
             buffer.loadedHistory = true
@@ -1112,6 +1143,13 @@ final class IRCSession: Identifiable {
     // MARK: - TAGMSG (typing + reactions)
 
     /// Inbound `TAGMSG` carrying client-only tags: `+typing` state and/or a
+    /// The parent-message reference from a message's tags. Prefers the ratified
+    /// `+reply` and falls back to the legacy `+draft/reply`, so we still thread
+    /// (and correlate reactions) with clients that haven't dropped the prefix.
+    private func replyRef(_ tags: [String: String]) -> String? {
+        tags["+reply"] ?? tags["+draft/reply"]
+    }
+
     /// `+draft/react` reaction.
     private func handleTagMsg(_ message: IRCMessage) {
         guard let target = message.first, let source = message.source else { return }
@@ -1122,10 +1160,15 @@ final class IRCSession: Identifiable {
                                   kind: isupport.isChannel(target) ? .channel : .query,
                                   createIfMissing: false) else { return }
 
-        if let emoji = message.tags["+draft/react"], let msgid = message.tags["+draft/reply"] {
+        // A TAGMSG replayed more than once (overlapping catch-up pages) must not
+        // re-apply its state change — a replayed react would resurrect a reaction
+        // the user has since removed. Keyed on the TAGMSG's own msgid.
+        if let mid = message.tags["msgid"], !buffer.markProcessed(mid) { return }
+
+        if let emoji = message.tags["+draft/react"], let msgid = replyRef(message.tags) {
             buffer.addReaction(emoji, toMsgID: msgid, from: sender)
         }
-        if let emoji = message.tags["+draft/unreact"], let msgid = message.tags["+draft/reply"] {
+        if let emoji = message.tags["+draft/unreact"], let msgid = replyRef(message.tags) {
             buffer.removeReaction(emoji, fromMsgID: msgid, by: sender)
         }
         if let typing = message.tags["+typing"], !isSelf {

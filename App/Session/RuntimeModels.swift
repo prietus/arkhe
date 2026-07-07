@@ -133,10 +133,16 @@ final class Buffer: Identifiable {
     var historyExhausted: Bool = false
     /// Live typing state (+typing client tag): nick → last "active" instant.
     var typing: [String: Date] = [:]
-    /// Server msgids already in `lines`, so a duplicate delivery (reconnect
-    /// catch-up overlap, event-playback replay, multi-batch) is dropped instead
-    /// of shown twice.
+    /// Server msgids already processed — lines shown AND stateful TAGMSGs
+    /// (reactions) applied — so a duplicate delivery (reconnect catch-up overlap,
+    /// event-playback replay, multi-batch) is dropped instead of applied twice.
     private var seenMsgIDs: Set<String> = []
+
+    /// Records a msgid as processed. Returns false when it had already been
+    /// seen — the caller should skip the message.
+    func markProcessed(_ msgid: String) -> Bool {
+        seenMsgIDs.insert(msgid).inserted
+    }
 
     init(name: String, kind: Kind) {
         self.name = name
@@ -161,8 +167,8 @@ final class Buffer: Identifiable {
         // Drop anything we already hold, keyed on the stable server msgid: a
         // reconnect catch-up page overlaps what we have, event-playback can replay
         // a live line, and a message may be delivered under more than one batch.
-        // Lines without a msgid (local status, presence events) always append.
-        if let mid = line.msgid, !seenMsgIDs.insert(mid).inserted { return }
+        // Lines without a msgid (local status lines) always append.
+        if let mid = line.msgid, !markProcessed(mid) { return }
         // History lines slot into timestamp order; live lines append. A history
         // page (LATEST/BEFORE) arrives oldest-first, so we insert before the
         // first strictly-newer line — this keeps each page a contiguous, ordered
