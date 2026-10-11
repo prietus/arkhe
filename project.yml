@@ -24,6 +24,10 @@ targets:
       path: App/Resources/Info.plist
       properties:
         CFBundleDisplayName: Arkhe
+        # Without these, xcodegen writes literal 1.0/1 into the generated
+        # Info.plist, which overrides MARKETING_VERSION at build time.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSLocalNetworkUsageDescription: "Arkhe necesita acceso a tu red local para conectarse a servidores IRC y bouncers (como soju) alojados en tu red."
         UILaunchScreen: {}
         UIApplicationSceneManifest:
@@ -41,8 +45,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: im.arkhe.client
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.1.0"
+        CURRENT_PROJECT_VERSION: "3"
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "6.0"
         CODE_SIGN_STYLE: Automatic
@@ -68,14 +72,16 @@ targets:
       path: NotificationService/Info.plist
       properties:
         CFBundleDisplayName: Arkhe
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.usernotifications.service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: im.arkhe.client.NotificationService
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.1.0"
+        CURRENT_PROJECT_VERSION: "3"
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "6.0"
         CODE_SIGN_STYLE: Automatic
