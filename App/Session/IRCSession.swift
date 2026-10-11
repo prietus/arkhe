@@ -139,6 +139,11 @@ final class IRCSession: Identifiable {
 
     /// How many messages we ask for per chathistory page.
     private static let historyPageSize = 100
+    /// Reconnect catch-up pages to chase before giving up on bridging the gap
+    /// and re-fetching the latest page instead (avoids a hole in the middle).
+    private static let maxCatchUpPages = 10
+    /// Catch-up pages fetched so far per buffer name, during one catch-up run.
+    private var catchUpPages: [String: Int] = [:]
 
     /// WHOX query-type token echoed back in the `t` field, so we only act on WHO
     /// replies we asked for (not ones triggered by a user `/whois`).
@@ -663,6 +668,11 @@ final class IRCSession: Identifiable {
             if let nick = message.first { currentNick = nick }
             addStatus(message.trailing ?? "Connected.", kind: .event)
             autoJoin()
+            // Channels catch up when the server (re-)JOINs us; queries get no
+            // JOIN, so catch up the ones we already hold scrollback for here.
+            for buffer in buffers where buffer.kind == .query && buffer.loadedHistory {
+                requestHistory(for: buffer)
+            }
         case .iSupport:
             isupport.apply(message)
             warnIfClientTagsDenied()
@@ -975,6 +985,8 @@ final class IRCSession: Identifiable {
                 }
                 if info.isCatchUp {
                     catchUpTargets = catchUpTargets.filter { !isupport.equalIdentifiers($0, target) }
+                    continueCatchUp(buffer, fullPage: info.messageCount >= Self.historyPageSize
+                                                       && !info.isEndOfHistory)
                 }
                 buffer.recomputeUnread()
             }
@@ -1119,6 +1131,49 @@ final class IRCSession: Identifiable {
             let selector = "timestamp=\(Self.timeFormatter.string(from: newest))"
             send(IRCMessage(command: "CHATHISTORY",
                             parameters: ["AFTER", buffer.name, selector, "\(Self.historyPageSize)"]))
+        }
+    }
+
+    /// After a catch-up page: keep paging forward while pages come back full,
+    /// up to `maxCatchUpPages`. Past that the gap is too big to bridge, so drop
+    /// the local scrollback and start over from the latest page.
+    private func continueCatchUp(_ buffer: Buffer, fullPage: Bool) {
+        let key = isupport.caseMapping.fold(buffer.name)
+        guard fullPage else {
+            catchUpPages[key] = nil
+            return
+        }
+        let pages = (catchUpPages[key] ?? 1) + 1
+        if pages > Self.maxCatchUpPages {
+            catchUpPages[key] = nil
+            buffer.resetHistory()
+        } else {
+            catchUpPages[key] = pages
+        }
+        requestHistory(for: buffer)
+    }
+
+    // MARK: - On-device history
+
+    /// The channels and queries to keep on disk, newest lines only.
+    func historySnapshot() -> HistoryStore.Snapshot {
+        let kept = buffers.filter { $0.kind != .status && !$0.lines.isEmpty }.map {
+            HistoryStore.BufferSnapshot(name: $0.name, kind: $0.kind, topic: $0.topic,
+                                        readMarker: $0.readMarker,
+                                        historyExhausted: $0.historyExhausted
+                                            && $0.lines.count <= HistoryStore.maxLinesPerBuffer,
+                                        lines: Array($0.lines.suffix(HistoryStore.maxLinesPerBuffer)))
+        }
+        return HistoryStore.Snapshot(buffers: kept)
+    }
+
+    /// Recreates buffers from a saved snapshot. Call before connecting; the
+    /// server's JOINs then mark the channels joined and trigger the catch-up.
+    func restoreHistory(_ snapshot: HistoryStore.Snapshot) {
+        for saved in snapshot.buffers where saved.kind != .status {
+            guard let buffer = buffer(named: saved.name, kind: saved.kind, createIfMissing: true),
+                  buffer.lines.isEmpty else { continue }
+            buffer.restore(saved)
         }
     }
 

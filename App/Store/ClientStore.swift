@@ -65,6 +65,9 @@ final class ClientStore {
     func session(for config: ServerConfig) -> IRCSession {
         if let existing = sessions[config.id] { return existing }
         let session = makeSession(SessionConfig(config, clientName: preferences.sojuClientName))
+        if preferences.keepHistoryOnDevice, let snapshot = HistoryStore.load(config.id) {
+            session.restoreHistory(snapshot)
+        }
         sessions[config.id] = session
         return session
     }
@@ -114,6 +117,7 @@ final class ClientStore {
 
         sessions[id]?.disconnect()
         sessions[id] = nil
+        HistoryStore.delete(id)
         if selectedSessionID == id {
             selectedSessionID = nil
             selectedBufferID = nil
@@ -137,6 +141,7 @@ final class ClientStore {
     func handleScenePhase(_ phase: ScenePhase) {
         switch phase {
         case .background:
+            saveHistory()
             beginBackgroundHold()
         case .active:
             endBackgroundHold()
@@ -144,6 +149,15 @@ final class ClientStore {
             reconnectDroppedSessions()
         default:
             break
+        }
+    }
+
+    /// Writes each account session's scrollback to disk. Bound-network sessions
+    /// get a fresh id every launch, so there'd be nothing to restore them into.
+    func saveHistory() {
+        guard preferences.keepHistoryOnDevice else { return }
+        for (id, session) in sessions where session.config.boundNetworkID == nil {
+            HistoryStore.save(session.historySnapshot(), for: id)
         }
     }
 

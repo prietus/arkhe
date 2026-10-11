@@ -2,8 +2,8 @@ import Foundation
 import Observation
 
 /// A rendered line in a buffer. Value type — buffers hold an array of these.
-struct ChatLine: Identifiable, Sendable {
-    enum Kind: Sendable {
+struct ChatLine: Identifiable, Sendable, Codable {
+    enum Kind: String, Sendable, Codable {
         case message      // PRIVMSG
         case notice       // NOTICE
         case action       // CTCP ACTION (/me)
@@ -23,7 +23,7 @@ struct ChatLine: Identifiable, Sendable {
     /// Presence events that the user can choose to hide or collapse. Other
     /// `.event` lines (topic, mode, connection) carry `presence == nil` and are
     /// always shown.
-    enum Presence: Sendable { case join, part, quit, nick }
+    enum Presence: String, Sendable, Codable { case join, part, quit, nick }
 
     let id: UUID
     var timestamp: Date
@@ -107,7 +107,7 @@ struct Member: Identifiable, Sendable, Hashable {
 /// A conversation target: the server status window, a channel, or a private query.
 @MainActor @Observable
 final class Buffer: Identifiable {
-    enum Kind: Sendable { case status, channel, query }
+    enum Kind: String, Sendable, Codable { case status, channel, query }
 
     let id = UUID()
     let name: String
@@ -147,6 +147,30 @@ final class Buffer: Identifiable {
     init(name: String, kind: Kind) {
         self.name = name
         self.kind = kind
+    }
+
+    /// Seeds the buffer from on-device history (see `HistoryStore`), recording
+    /// the msgids so the reconnect catch-up's overlap is dropped as duplicates.
+    func restore(_ snapshot: HistoryStore.BufferSnapshot) {
+        lines = snapshot.lines
+        for case let mid? in snapshot.lines.map(\.msgid) { seenMsgIDs.insert(mid) }
+        topic = snapshot.topic
+        readMarker = snapshot.readMarker
+        historyExhausted = snapshot.historyExhausted
+        // Restored scrollback counts as already loaded: the next JOIN catches up
+        // with `CHATHISTORY AFTER` instead of re-pulling the `LATEST` page.
+        loadedHistory = !lines.isEmpty
+        recomputeUnread()
+    }
+
+    /// Drops all scrollback so it can be re-fetched from scratch — used when a
+    /// catch-up gap is too large to page through.
+    func resetHistory() {
+        lines.removeAll()
+        seenMsgIDs.removeAll()
+        loadedHistory = false
+        historyExhausted = false
+        unreadCount = 0
     }
 
     /// Timestamp of the newest real (msgid-bearing) message — the boundary a

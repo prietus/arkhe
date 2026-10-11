@@ -97,10 +97,11 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("Load images & link previews", isOn: $prefs.autoLoadMedia)
+                    Toggle("Keep history on device", isOn: $prefs.keepHistoryOnDevice)
                 } header: {
                     Text("Media")
                 } footer: {
-                    Text("Automatically fetches inline image thumbnails and link previews. This reveals your IP address to the sites hosting them. Links stay tappable either way.")
+                    Text("Automatically fetches inline image thumbnails and link previews. This reveals your IP address to the sites hosting them. Links stay tappable either way. History on device keeps the last \(HistoryStore.maxLinesPerBuffer) lines per conversation so chats open instantly; turning it off deletes them.")
                 }
 
                 Section {

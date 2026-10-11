@@ -47,6 +47,14 @@ final class Preferences {
     /// tappable regardless; this only governs automatic network fetches (which
     /// reveal your IP to the link's host — an IRC privacy consideration).
     var autoLoadMedia: Bool                     { didSet { d.set(autoLoadMedia, forKey: K.media) } }
+    /// Keep recent scrollback on the device so conversations show instantly at
+    /// launch. Turning it off deletes what was stored.
+    var keepHistoryOnDevice: Bool {
+        didSet {
+            d.set(keepHistoryOnDevice, forKey: K.keepHistory)
+            if !keepHistoryOnDevice { HistoryStore.deleteAll() }
+        }
+    }
 
     /// Local notifications for highlights and direct messages. `notificationsEnabled`
     /// is the master switch; the rest refine it.
@@ -113,6 +121,7 @@ final class Preferences {
         static let timestamps = "pref.showTimestamps"
         static let clock      = "pref.clockStyle"
         static let media      = "pref.autoLoadMedia"
+        static let keepHistory = "pref.keepHistoryOnDevice"
         static let notifEnabled = "pref.notificationsEnabled"
         static let notifMention = "pref.notifyOnMention"
         static let notifDM      = "pref.notifyOnDirectMessage"
@@ -134,6 +143,7 @@ final class Preferences {
         showTimestamps = d.object(forKey: K.timestamps) as? Bool ?? true
         clockStyle = ClockStyle(rawValue: d.string(forKey: K.clock) ?? "") ?? .system
         autoLoadMedia = d.object(forKey: K.media) as? Bool ?? true
+        keepHistoryOnDevice = d.object(forKey: K.keepHistory) as? Bool ?? true
         notificationsEnabled = d.object(forKey: K.notifEnabled) as? Bool ?? true
         notifyOnMention = d.object(forKey: K.notifMention) as? Bool ?? true
         notifyOnDirectMessage = d.object(forKey: K.notifDM) as? Bool ?? true
