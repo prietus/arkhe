@@ -79,6 +79,22 @@ struct ChatLine: Identifiable, Sendable, Codable {
 }
 
 /// A channel member with their highest membership prefix.
+/// The messages around a reply's original, fetched on demand (CHATHISTORY
+/// AROUND) because it predates the loaded scrollback.
+struct AroundContext: Identifiable {
+    var target: String
+    /// The original message the user wants to see.
+    var msgid: String
+    var lines: [ChatLine] = []
+    var isLoading = true
+    /// The server couldn't return it (unsupported, deleted or too old).
+    var failed = false
+    /// Closed by the user while still loading: kept until its batch arrives so
+    /// those messages are still routed here and not into the timeline.
+    var dismissed = false
+    var id: String { msgid }
+}
+
 struct Member: Identifiable, Sendable, Hashable {
     var nick: String
     var prefix: Character?    // @, +, etc. (highest)

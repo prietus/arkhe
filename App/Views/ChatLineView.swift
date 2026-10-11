@@ -3,11 +3,12 @@ import SwiftUI
 /// Renders one `ChatLine`. Messages show a colourised nick + text; events and
 /// notices get a muted, distinct style.
 struct ChatLineView: View {
-    /// The resolved parent of a reply, for the quoted block.
+    /// The parent of a reply. `lineID` is nil when the original isn't in the
+    /// loaded scrollback (it's fetched on tap instead).
     struct ReplyContext: Equatable {
         var sender: String
         var text: String
-        var lineID: UUID
+        var lineID: UUID?
     }
 
     let line: ChatLine

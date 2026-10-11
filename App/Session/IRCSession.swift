@@ -124,6 +124,9 @@ final class IRCSession: Identifiable {
         /// The server flagged this page as the last one (`draft/chathistory-end`
         /// on the opening BATCH).
         var isEndOfHistory: Bool = false
+        /// The batch answers our `CHATHISTORY AROUND`: its messages go to
+        /// `aroundContext`, not into the buffer.
+        var isAroundContext: Bool = false
         /// The enclosing batch (e.g. a chathistory batch a multiline sits in).
         var parentRef: String?
         // draft/multiline accumulation: the message's whole-message tags/source
@@ -144,6 +147,13 @@ final class IRCSession: Identifiable {
     private static let maxCatchUpPages = 10
     /// Catch-up pages fetched so far per buffer name, during one catch-up run.
     private var catchUpPages: [String: Int] = [:]
+
+    /// Messages around a reply's original that isn't in the loaded scrollback,
+    /// fetched with `CHATHISTORY AROUND` and shown apart from the timeline (so
+    /// no disconnected island lands in it). `nil` when nothing is requested.
+    private(set) var aroundContext: AroundContext?
+    /// The `AROUND` request is sent; its chathistory batch hasn't opened yet.
+    private var aroundAwaitingBatch = false
 
     /// WHOX query-type token echoed back in the `t` field, so we only act on WHO
     /// replies we asked for (not ones triggered by a user `/whois`).
@@ -545,6 +555,13 @@ final class IRCSession: Identifiable {
             if negotiator.isFinished { captureNegotiationResult() }
         }
 
+        // Only the messages of an AROUND reply matter; its replayed events
+        // (joins, reactions, …) must not touch the live buffer.
+        if let ref = message.tags["batch"], openBatches[ref]?.isAroundContext == true,
+           !["PRIVMSG", "NOTICE", "BATCH"].contains(message.command) {
+            return
+        }
+
         switch message.command {
         case "PING":
             send(.pong(message.trailing ?? ""))
@@ -751,6 +768,10 @@ final class IRCSession: Identifiable {
             replyTo: replyRef(message.tags),
             isHistorical: info?.isHistory ?? false
         )
+        if info?.isAroundContext == true {
+            aroundContext?.lines.append(line)
+            return
+        }
         let mentionsMe = isHighlight(body)
         buffer.append(line, markUnread: !isSelf)
         if mentionsMe && !isSelf && !line.isHistorical { buffer.hasMention = true }
@@ -943,7 +964,12 @@ final class IRCSession: Identifiable {
                catchUpTargets.contains(where: { isupport.equalIdentifiers($0, target) }) {
                 info.isCatchUp = true
             }
-            if isHistory, message.tags["draft/chathistory-end"] != nil {
+            if isHistory, aroundAwaitingBatch, let target = info.target,
+               let context = aroundContext, isupport.equalIdentifiers(context.target, target) {
+                info.isAroundContext = true
+                aroundAwaitingBatch = false
+            }
+            if isHistory, !info.isAroundContext, message.tags["draft/chathistory-end"] != nil {
                 info.isEndOfHistory = true
                 serverSignalsHistoryEnd = true
             }
@@ -968,7 +994,9 @@ final class IRCSession: Identifiable {
             if let info = openBatches[ref], info.type == CapabilityName.multiline {
                 finishMultiline(info)
             }
-            if let info = openBatches[ref], info.isHistory, let target = info.target,
+            if let info = openBatches[ref], info.isAroundContext {
+                finishAroundContext(failed: false)
+            } else if let info = openBatches[ref], info.isHistory, let target = info.target,
                let buffer = buffer(named: target,
                                    kind: isupport.isChannel(target) ? .channel : .query,
                                    createIfMissing: false) {
@@ -1047,6 +1075,10 @@ final class IRCSession: Identifiable {
             timestamp: ts, sender: sender, text: text, kind: lineKind, isSelf: isSelf,
             account: info.multilineTags["account"], msgid: info.multilineTags["msgid"],
             replyTo: replyRef(info.multilineTags), isHistorical: historical)
+        if info.parentRef.flatMap({ openBatches[$0]?.isAroundContext }) == true {
+            aroundContext?.lines.append(line)
+            return
+        }
         let mentionsMe = isHighlight(text)
         buffer.append(line, markUnread: !isSelf)
         if mentionsMe && !isSelf && !historical { buffer.hasMention = true }
@@ -1151,6 +1183,53 @@ final class IRCSession: Identifiable {
             catchUpPages[key] = pages
         }
         requestHistory(for: buffer)
+    }
+
+    // MARK: - Reply context (CHATHISTORY AROUND)
+
+    /// Fetches the messages around `msgid` — the original of a reply that's
+    /// older than the loaded scrollback — into `aroundContext`.
+    func loadContext(around msgid: String, in buffer: Buffer) {
+        guard enabledCaps.contains(CapabilityName.chathistory), status == .connected else {
+            aroundContext = AroundContext(target: buffer.name, msgid: msgid, isLoading: false, failed: true)
+            return
+        }
+        // Serialized with the buffer's other history requests: chathistory
+        // batches carry only the target, so two in flight couldn't be told apart.
+        guard !buffer.isLoadingHistory else { return }
+        buffer.isLoadingHistory = true
+        aroundContext = AroundContext(target: buffer.name, msgid: msgid)
+        aroundAwaitingBatch = true
+        send(IRCMessage(command: "CHATHISTORY",
+                        parameters: ["AROUND", buffer.name, "msgid=\(msgid)", "\(Self.aroundContextSize)"]))
+        // A server without AROUND may answer with a bare numeric instead of FAIL;
+        // don't leave the buffer's history requests blocked forever.
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(10))
+            guard let self, self.aroundAwaitingBatch, self.aroundContext?.msgid == msgid else { return }
+            self.finishAroundContext(failed: true)
+        }
+    }
+
+    func dismissAroundContext() {
+        if aroundContext?.isLoading == true {
+            aroundContext?.dismissed = true
+        } else {
+            aroundContext = nil
+        }
+    }
+
+    private static let aroundContextSize = 30
+
+    private func finishAroundContext(failed: Bool) {
+        guard var context = aroundContext else { return }
+        aroundAwaitingBatch = false
+        context.lines.sort { $0.timestamp < $1.timestamp }
+        context.isLoading = false
+        context.failed = failed || !context.lines.contains { $0.msgid == context.msgid }
+        aroundContext = context.dismissed ? nil : context
+        buffer(named: context.target, kind: isupport.isChannel(context.target) ? .channel : .query,
+               createIfMissing: false)?.isLoadingHistory = false
     }
 
     // MARK: - On-device history
@@ -1286,6 +1365,9 @@ final class IRCSession: Identifiable {
         case "FAIL": symbol = "✗"; kind = .error
         case "WARN": symbol = "⚠️"; kind = .error
         default:     symbol = "ℹ️"; kind = .event   // NOTE
+        }
+        if message.command == "FAIL", command == "CHATHISTORY", aroundContext?.isLoading == true {
+            finishAroundContext(failed: true)
         }
         let label2 = command == "*" ? code : "\(command) \(code)"
         addStatus("\(symbol) \(attribution)\(label2): \(description)", kind: kind)

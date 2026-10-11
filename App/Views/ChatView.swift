@@ -106,6 +106,13 @@ struct ChatView: View {
             }
             .presentationDetents([.height(160)])
         }
+        .sheet(item: aroundContextBinding) { context in
+            AroundContextSheet(context: context,
+                               currentNick: session.currentNick,
+                               showTimestamps: prefs.showTimestamps,
+                               clockStyle: prefs.clockStyle)
+                .presentationDetents([.medium, .large])
+        }
     }
 
     private var messageList: some View {
@@ -129,7 +136,13 @@ struct ChatView: View {
                             autoLoadMedia: prefs.autoLoadMedia,
                             uploaderHost: URL(string: uploader.uploadURL)?.host,
                             onTapReaction: { emoji in session.toggleReaction(emoji, to: line, in: buffer) },
-                            onTapReply: reply.map { ctx in { proxy.scrollTo(ctx.lineID, anchor: .center) } }
+                            onTapReply: reply.map { ctx in {
+                                if let target = ctx.lineID {
+                                    proxy.scrollTo(target, anchor: .center)
+                                } else if let parent = line.replyTo {
+                                    session.loadContext(around: parent, in: buffer)
+                                }
+                            } }
                         )
                         .id(line.id)
                         .padding(.horizontal, 12)
@@ -353,12 +366,28 @@ struct ChatView: View {
     }
 
     /// Resolves the parent of a reply within this buffer, for the quoted block.
+    /// An original older than the loaded scrollback still yields a context (no
+    /// `lineID`), so the ↳ shows and a tap fetches it with CHATHISTORY AROUND.
     private func replyContext(for line: ChatLine) -> ChatLineView.ReplyContext? {
-        guard let parentID = line.replyTo,
-              let parent = buffer.lines.first(where: { $0.msgid == parentID }) else { return nil }
+        guard let parentID = line.replyTo else { return nil }
+        guard let parent = buffer.lines.first(where: { $0.msgid == parentID }) else {
+            return .init(sender: "?", text: "", lineID: nil)
+        }
         return .init(sender: parent.sender ?? "?",
                      text: String(parent.text.prefix(120)),
                      lineID: parent.id)
+    }
+
+    /// The AROUND context for this buffer, as the sheet's item.
+    private var aroundContextBinding: Binding<AroundContext?> {
+        Binding(
+            get: {
+                guard let context = session.aroundContext, !context.dismissed,
+                      context.target == buffer.name else { return nil }
+                return context
+            },
+            set: { if $0 == nil { session.dismissAroundContext() } }
+        )
     }
 
     private func replyContextBar(_ line: ChatLine) -> some View {
@@ -468,6 +497,65 @@ private struct EmojiKeyboardField: UIViewRepresentable {
         if !context.coordinator.didFocus {
             context.coordinator.didFocus = true
             DispatchQueue.main.async { field.becomeFirstResponder() }
+        }
+    }
+}
+
+/// The messages around a reply's original that predates the loaded scrollback
+/// (CHATHISTORY AROUND), with the original highlighted and centred.
+private struct AroundContextSheet: View {
+    let context: AroundContext
+    let currentNick: String?
+    let showTimestamps: Bool
+    let clockStyle: Preferences.ClockStyle
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if context.isLoading {
+                    ProgressView()
+                } else if context.failed {
+                    ContentUnavailableView(
+                        "Original message unavailable",
+                        systemImage: "text.bubble",
+                        description: Text("The server couldn't return it. It may be too old, deleted, or this server doesn't support fetching it."))
+                } else {
+                    lineList
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .navigationTitle("Original message")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private var lineList: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(context.lines) { line in
+                        ChatLineView(line: line, currentNick: currentNick,
+                                     showTimestamps: showTimestamps, clockStyle: clockStyle,
+                                     autoLoadMedia: false)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 2)
+                            .background(line.msgid == context.msgid ? Color.accentColor.opacity(0.15) : .clear)
+                            .id(line.id)
+                    }
+                }
+                .padding(.vertical, 8)
+            }
+            .onAppear {
+                if let target = context.lines.first(where: { $0.msgid == context.msgid }) {
+                    proxy.scrollTo(target.id, anchor: .center)
+                }
+            }
         }
     }
 }
