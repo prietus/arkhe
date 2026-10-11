@@ -126,7 +126,7 @@ final class ClientStore {
         buffer.unreadCount = 0
         buffer.hasMention = false
         // Lazily fetch the roster the first time a channel is opened (see
-        // `loadMembersIfNeeded` — relevant under soju.im/no-implicit-names).
+        // `loadMembersIfNeeded` — relevant under no-implicit-names).
         session.loadMembersIfNeeded(buffer)
     }
 

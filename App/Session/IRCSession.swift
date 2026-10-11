@@ -92,6 +92,10 @@ final class IRCSession: Identifiable {
     /// Channels with a reconnect catch-up (`CHATHISTORY AFTER`) request in flight,
     /// so its incoming batch can be told apart from an initial/scroll-up page.
     private var catchUpTargets: Set<String> = []
+    /// Set once this connection has seen a `draft/chathistory-end` tag. From then
+    /// on a short page no longer implies "start of history": only the tag or an
+    /// empty page does (Ergo may return short pages mid-history).
+    private var serverSignalsHistoryEnd = false
 
     private struct BatchInfo {
         var type: String
@@ -103,6 +107,9 @@ final class IRCSession: Identifiable {
         /// means "we're up to date", NOT "reached the start", so it must not set
         /// `historyExhausted`.
         var isCatchUp: Bool = false
+        /// The server flagged this page as the last one (`draft/chathistory-end`
+        /// on the opening BATCH).
+        var isEndOfHistory: Bool = false
         /// The enclosing batch (e.g. a chathistory batch a multiline sits in).
         var parentRef: String?
         // draft/multiline accumulation: the message's whole-message tags/source
@@ -159,6 +166,7 @@ final class IRCSession: Identifiable {
         status = .connecting
         didCaptureCaps = false
         didWarnClientTagDeny = false
+        serverSignalsHistoryEnd = false
         negotiator = CapabilityNegotiator(desired: config.desiredCaps, mechanism: config.saslMechanism)
         addStatus("Connecting to \(config.host):\(config.port)…", kind: .event)
 
@@ -412,7 +420,7 @@ final class IRCSession: Identifiable {
     }
 
     /// Fetches the member roster for a channel the first time it's viewed. Under
-    /// `soju.im/no-implicit-names` NAMES isn't pushed on JOIN, so we ask on demand
+    /// `no-implicit-names` NAMES isn't pushed on JOIN, so we ask on demand
     /// — this is what turns the cap into a real bandwidth win on reconnect (no
     /// roster for channels you never open). A no-op once the list is loaded.
     func loadMembersIfNeeded(_ buffer: Buffer) {
@@ -911,6 +919,10 @@ final class IRCSession: Identifiable {
                catchUpTargets.contains(where: { isupport.equalIdentifiers($0, target) }) {
                 info.isCatchUp = true
             }
+            if isHistory, message.tags["draft/chathistory-end"] != nil {
+                info.isEndOfHistory = true
+                serverSignalsHistoryEnd = true
+            }
             if type == CapabilityName.multiline {
                 // Whole-message tags (msgid/time/account) and the sender ride on
                 // the opening BATCH; remember the enclosing batch for history.
@@ -937,11 +949,15 @@ final class IRCSession: Identifiable {
                                    kind: isupport.isChannel(target) ? .channel : .query,
                                    createIfMissing: false) {
                 buffer.isLoadingHistory = false
-                // A short LATEST/BEFORE page means we've reached the start of
-                // history; a short catch-up (AFTER) page just means we're up to
-                // date, so keep the "load older" affordance alive.
-                if !info.isCatchUp, info.messageCount < Self.historyPageSize {
-                    buffer.historyExhausted = true
+                // A LATEST/BEFORE page ends history when the server says so
+                // (`draft/chathistory-end`) or it's empty; servers that never send
+                // the tag fall back to "short page = start of history". A catch-up
+                // (AFTER) page just means we're up to date, so keep the "load
+                // older" affordance alive.
+                if !info.isCatchUp {
+                    let reachedStart = info.isEndOfHistory || info.messageCount == 0
+                        || (!serverSignalsHistoryEnd && info.messageCount < Self.historyPageSize)
+                    if reachedStart { buffer.historyExhausted = true }
                 }
                 if info.isCatchUp {
                     catchUpTargets = catchUpTargets.filter { !isupport.equalIdentifiers($0, target) }

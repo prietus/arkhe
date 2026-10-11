@@ -49,6 +49,8 @@ public enum CapabilityName {
     public static let setname = "setname"
     public static let inviteNotify = "invite-notify"
     public static let standardReplies = "standard-replies"
+    /// Ratified successor of `soju.im/no-implicit-names` (Ergo 2.19+, Libera).
+    public static let noImplicitNames = "no-implicit-names"
 
     // Drafts widely deployed (and supported by soju)
     public static let multiline = "draft/multiline"
@@ -62,7 +64,7 @@ public enum CapabilityName {
     // soju vendor extensions for bouncer multi-network support
     public static let bouncerNetworks = "soju.im/bouncer-networks"
     public static let bouncerNetworksNotify = "soju.im/bouncer-networks-notify"
-    public static let noImplicitNames = "soju.im/no-implicit-names"
+    public static let sojuNoImplicitNames = "soju.im/no-implicit-names"
     /// Web Push: lets the bouncer push highlights/DMs while the app is closed.
     public static let webpush = "soju.im/webpush"
 
@@ -73,6 +75,6 @@ public enum CapabilityName {
         accountNotify, accountTag, awayNotify, chghost, extendedJoin,
         multiPrefix, userhostInNames, capNotify, setname, inviteNotify,
         standardReplies, chathistory, eventPlayback, messageRedaction, readMarker,
-        multiline, bouncerNetworks, bouncerNetworksNotify, noImplicitNames, webpush,
+        multiline, bouncerNetworks, bouncerNetworksNotify, noImplicitNames, sojuNoImplicitNames, webpush,
     ]
 }

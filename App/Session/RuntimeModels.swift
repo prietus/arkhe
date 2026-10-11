@@ -116,7 +116,7 @@ final class Buffer: Identifiable {
     var topic: String?
     var members: [Member] = []
     /// Whether the member roster has been populated yet. With
-    /// `soju.im/no-implicit-names` the server doesn't push NAMES on JOIN, so the
+    /// `no-implicit-names` the server doesn't push NAMES on JOIN, so the
     /// list is fetched lazily the first time the channel is viewed.
     var membersLoaded: Bool = false
     var unreadCount: Int = 0
