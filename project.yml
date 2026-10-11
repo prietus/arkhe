@@ -20,6 +20,9 @@ targets:
     dependencies:
       - package: IRCCore
       - target: ArkheNotificationService
+    scheme:
+      testTargets:
+        - ArkheTests
     info:
       path: App/Resources/Info.plist
       properties:
@@ -87,3 +90,20 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: LFTD9T269J
         CODE_SIGN_ENTITLEMENTS: Config/NotificationService.entitlements
+
+  # Session-level tests: drive IRCSession through a fake IRCTransport.
+  ArkheTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Tests/ArkheTests
+    dependencies:
+      - target: Arkhe
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: im.arkhe.client.tests
+        GENERATE_INFOPLIST_FILE: "YES"
+        SWIFT_VERSION: "6.0"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: LFTD9T269J

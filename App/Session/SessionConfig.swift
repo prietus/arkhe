@@ -31,6 +31,30 @@ struct SessionConfig: Sendable, Identifiable {
     /// The control/account session leaves this `nil`.
     var boundNetworkID: String?
 
+    /// A config built directly, without a stored `ServerConfig` (tests, presets).
+    init(id: UUID = UUID(), name: String = "", host: String, port: UInt16 = 6697,
+         useTLS: Bool = true, nickname: String, saslMode: SASLMode = .none,
+         saslAccount: String = "", saslPassword: String? = nil, isBouncer: Bool = false) {
+        self.id = id
+        self.name = name
+        self.host = host
+        self.port = port
+        self.useTLS = useTLS
+        allowInvalidCertificates = false
+        self.nickname = nickname
+        username = nickname
+        realName = nickname
+        self.saslMode = saslMode
+        self.saslAccount = saslAccount
+        self.saslPassword = saslPassword
+        serverPassword = nil
+        self.isBouncer = isBouncer
+        autoJoinChannels = []
+        certificateData = nil
+        certificatePassphrase = nil
+        boundNetworkID = nil
+    }
+
     init(_ config: ServerConfig, clientName: String? = nil) {
         id = config.id
         name = config.name

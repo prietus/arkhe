@@ -89,7 +89,7 @@ final class IRCSession: Identifiable {
         return target
     }
 
-    private let connection = IRCConnection()
+    private let connection: any IRCTransport
     private var negotiator: CapabilityNegotiator
     private var didCaptureCaps = false
     private var eventTask: Task<Void, Never>?
@@ -165,7 +165,8 @@ final class IRCSession: Identifiable {
         return f
     }()
 
-    init(config: SessionConfig) {
+    init(config: SessionConfig, transport: any IRCTransport = IRCConnection()) {
+        self.connection = transport
         self.id = config.id
         self.config = config
         self.currentNick = config.nickname

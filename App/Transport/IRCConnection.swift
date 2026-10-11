@@ -8,7 +8,15 @@ import IRCCore
 ///
 /// It knows nothing about IRC semantics beyond line framing — registration,
 /// CAP and SASL live in `IRCSession`.
-actor IRCConnection {
+/// What `IRCSession` needs from the wire: open a stream of events, send, close.
+/// `IRCConnection` is the real one; tests drive the session with a fake.
+protocol IRCTransport: Sendable {
+    func open(_ endpoint: IRCConnection.Endpoint) async -> AsyncStream<IRCConnection.Event>
+    func send(_ message: IRCMessage) async
+    func disconnect() async
+}
+
+actor IRCConnection: IRCTransport {
     enum Event: Sendable {
         case connecting
         case ready
