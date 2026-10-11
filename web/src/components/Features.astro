@@ -1,0 +1,99 @@
+---
+const features = [
+  {
+    title: 'Built for bouncers',
+    body:
+      'Made with soju in mind: bind to a single network, keep per-device history, and catch up after every reconnect without duplicates.',
+    icon: 'server',
+  },
+  {
+    title: 'Push, even when closed',
+    body:
+      'Mentions and private messages arrive as notifications through your bouncer’s Web Push, end-to-end encrypted to your device.',
+    icon: 'bell',
+  },
+  {
+    title: 'Secure sign-in',
+    body:
+      'SASL PLAIN, SCRAM-SHA-256 when available, or a client certificate (CertFP). Passwords and keys live in the iOS Keychain.',
+    icon: 'lock',
+  },
+  {
+    title: 'Instant history',
+    body:
+      'Recent conversations are kept on the device, so they open immediately. Scroll up and older history loads from your bouncer.',
+    icon: 'clock',
+  },
+  {
+    title: 'Replies and reactions',
+    body:
+      'Threaded replies, emoji reactions, typing indicators and message deletion, using open IRCv3 tags other clients understand.',
+    icon: 'chat',
+  },
+  {
+    title: 'Read markers',
+    body:
+      'Read a channel in another client and it is read in Arkhe too. Unread counts follow you between devices.',
+    icon: 'check',
+  },
+  {
+    title: 'Images and uploads',
+    body:
+      'Inline images and link previews (you can turn auto-loading off). Attach files through your bouncer’s file host or your own uploader.',
+    icon: 'image',
+  },
+  {
+    title: 'Made for iPad too',
+    body:
+      'A three-column layout, keyboard-friendly compose with nick completion, and drag and drop to share files into a channel.',
+    icon: 'tablet',
+  },
+  {
+    title: 'Open source',
+    body:
+      'The full source is public under the Apache 2.0 license. No account, no analytics, no ads, ever.',
+    icon: 'code',
+  },
+];
+
+const iconPath: Record<string, string> = {
+  server: 'M4 4h16v6H4V4Zm0 10h16v6H4v-6Zm3-7h.01M7 17h.01',
+  bell: 'M6 16V11a6 6 0 1 1 12 0v5l2 2H4l2-2Zm4 4a2 2 0 0 0 4 0',
+  lock: 'M6 11h12v10H6V11Zm2 0V7a4 4 0 1 1 8 0v4',
+  clock: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 4v5l3 2',
+  chat: 'M4 5h16v11H9l-5 4V5Zm4 5h8',
+  check: 'M3 12l5 5L21 4M8 12l5 5',
+  image: 'M4 5h16v14H4V5Zm0 11 5-5 4 4 2-2 5 5M15 9h.01',
+  tablet: 'M6 2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm5 17h2',
+  code: 'M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16',
+};
+---
+
+<section id="features" class="relative scroll-mt-20 py-24 sm:py-32">
+  <div class="container-wide">
+    <div class="max-w-2xl">
+      <span class="eyebrow">What's inside</span>
+      <h2 class="mt-3 text-balance text-3xl font-semibold tracking-tight sm:text-5xl">
+        Everything you’d expect from chat. Still IRC.
+      </h2>
+      <p class="mt-4 text-ink-300 sm:text-lg">
+        For people who never left IRC, and for anyone who wants an open, decentralised chat that
+        works properly on a phone.
+      </p>
+    </div>
+
+    <ul class="mt-14 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+      {features.map((f) => (
+        <li class="card group transition hover:border-accent/40">
+          <div class="flex h-11 w-11 items-center justify-center rounded-xl border border-ink-700/80 bg-ink-900/80 text-accent-hi shadow-[inset_0_0_0_1px_rgba(255,255,255,.03)]">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d={iconPath[f.icon]} />
+            </svg>
+          </div>
+          <h3 class="mt-5 text-lg font-semibold tracking-tight text-ink-100">{f.title}</h3>
+          <p class="mt-2 text-sm leading-relaxed text-ink-300">{f.body}</p>
+        </li>
+      ))}
+    </ul>
+  </div>
+</section>

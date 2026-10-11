@@ -1,0 +1,54 @@
+---
+import '../styles/global.css';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import { APP_STORE_URL, APP_STORE_ID } from '../data';
+
+interface Props {
+  title?: string;
+  description?: string;
+}
+
+const {
+  title = 'Arkhe — A native IRCv3 client for iPhone and iPad',
+  description =
+    'Arkhe is a native IRC client for iPhone and iPad, built for IRCv3 and IRC bouncers like soju: chat history, push notifications, SASL and CertFP sign-in, reactions and replies.',
+} = Astro.props;
+
+const url = new URL(Astro.url.pathname.replace(/\.html$/, ''), Astro.site ?? 'https://arkhe.priet.us/').toString();
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="canonical" href={url} />
+    {APP_STORE_URL && <meta name="apple-itunes-app" content={`app-id=${APP_STORE_ID}`} />}
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:image" content={new URL('/icon.png', url)} />
+    <meta property="og:url" content={url} />
+    <meta name="twitter:card" content="summary" />
+    <meta property="og:site_name" content="Arkhe" />
+    <link rel="preconnect" href="https://rsms.me/" />
+    <link rel="stylesheet" href="https://rsms.me/inter/inter.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <Nav />
+    <slot />
+    <Footer />
+  </body>
+</html>

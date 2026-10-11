@@ -1,0 +1,167 @@
+---
+import { Image } from 'astro:assets';
+import ipadChat from '../assets/screenshots/ipad-chat.png';
+import ipadReactions from '../assets/screenshots/ipad-reactions.png';
+import ipadSettings from '../assets/screenshots/ipad-settings.png';
+import iphoneChat from '../assets/screenshots/iphone-chat.png';
+import iphoneMenu from '../assets/screenshots/iphone-context-menu.png';
+import iphoneMembers from '../assets/screenshots/iphone-members.png';
+
+const slides = [
+  {
+    img: ipadChat,
+    device: 'ipad',
+    alt: 'iPad: sidebar with two networks and their channels, a channel with a link preview card',
+    eyebrow: 'Bouncers',
+    title: 'Every network, one sidebar.',
+    body:
+      'Point Arkhe at your bouncer or straight at a network. Channels arrive with their recent history, and when you reconnect only what you missed is fetched, so the conversation is simply there.',
+  },
+  {
+    img: iphoneMenu,
+    device: 'iphone',
+    alt: 'iPhone: long-press menu on a message with reply, react and copy actions',
+    eyebrow: 'Conversations',
+    title: 'Reply, react, carry on.',
+    body:
+      'Long-press a message to reply or react with any emoji. Replies are threaded, and tapping the arrow jumps to the original message, even when it is far back in history.',
+  },
+  {
+    img: ipadReactions,
+    device: 'ipad',
+    alt: 'iPad: messages with emoji reaction chips and counts',
+    eyebrow: 'IRCv3',
+    title: 'Modern features, standard protocol.',
+    body:
+      'Reactions, typing indicators, read markers synced across your devices, multi-line messages and deletions. All of it is open IRCv3, so it works with other clients on the same network.',
+  },
+  {
+    img: iphoneMembers,
+    device: 'iphone',
+    alt: 'iPhone: channel member list with operator badges, away status and bot labels',
+    eyebrow: 'People',
+    title: 'See who is around.',
+    body:
+      'Member lists show operators, away status and bots at a glance. On large channels the list loads only when you open it, so joining stays fast.',
+  },
+  {
+    img: iphoneChat,
+    device: 'iphone',
+    alt: 'iPhone: a channel with an image shown inline',
+    eyebrow: 'Media',
+    title: 'Images inline, files in one tap.',
+    body:
+      'Images and link previews appear right in the conversation. Attach a photo or file and Arkhe uploads it to your bouncer’s file host or your own uploader, then drops the link into your message.',
+  },
+  {
+    img: ipadSettings,
+    device: 'ipad',
+    alt: 'iPad: settings with display, media, notification and upload options',
+    eyebrow: 'Your way',
+    title: 'Quiet when you want it.',
+    body:
+      'Hide or collapse joins and parts, pick your clock, choose what notifies you, and decide whether media loads on its own. Push notifications reach you even with the app closed.',
+  },
+];
+---
+
+<section id="tour" class="relative mt-8 scroll-mt-20 sm:mt-16" aria-label="Tour">
+  <div class="container-wide mb-10 flex flex-col items-center text-center sm:mb-14">
+    <span class="eyebrow">The tour</span>
+    <h2 class="mt-3 text-balance text-3xl font-semibold tracking-tight sm:text-5xl">
+      Feels like home on iOS.
+    </h2>
+    <p class="mt-4 max-w-2xl text-ink-300 sm:text-lg">
+      A SwiftUI app with a three-column layout on iPad, drag and drop, and none of the clutter of a
+      desktop client squeezed onto a phone.
+    </p>
+  </div>
+
+  <!--
+    Pinned horizontal scroll on md+: the root is tall enough to drive the translation,
+    the inner wrapper is sticky and GSAP only moves the track. On mobile the slides stack.
+  -->
+  <div id="tour-root" class="relative md:h-[400vh]">
+    <div class="flex flex-col gap-12 md:sticky md:top-0 md:h-screen md:flex-row md:items-center md:overflow-hidden">
+      <div
+        id="tour-track"
+        class="flex flex-col gap-12 px-6 md:flex-row md:flex-nowrap md:items-center md:gap-16 md:px-16 md:will-change-transform"
+      >
+        {slides.map((s, i) => (
+          <article class="relative flex flex-col items-center gap-8 rounded-3xl border border-ink-700/70 bg-ink-900/60 p-6 shadow-glow backdrop-blur md:h-[min(78vh,720px)] md:w-[min(86vw,1180px)] md:shrink-0 md:flex-row md:justify-center md:gap-14 md:p-12">
+            <div class="md:max-w-[38%]">
+              <span class="eyebrow">{s.eyebrow}</span>
+              <h3 class="mt-3 text-balance text-3xl font-semibold tracking-tight sm:text-4xl">
+                {s.title}
+              </h3>
+              <p class="mt-5 text-pretty text-base text-ink-300 md:text-lg">{s.body}</p>
+              <div class="mt-6 flex items-center gap-3 text-xs text-ink-400">
+                <span class="font-mono">{String(i + 1).padStart(2, '0')}</span>
+                <span class="h-px w-10 bg-ink-600"></span>
+                <span class="font-mono">{String(slides.length).padStart(2, '0')}</span>
+              </div>
+            </div>
+            {s.device === 'ipad' ? (
+              <div class="w-full shrink-0 md:w-[56%]">
+                <div class="ipad w-full">
+                  <Image src={s.img} alt={s.alt} widths={[600, 900, 1300]} sizes="(min-width: 768px) 640px, 90vw" class="h-full w-full object-cover" loading="lazy" />
+                </div>
+              </div>
+            ) : (
+              <div class="flex w-full shrink-0 justify-center md:h-full md:w-[56%] md:items-center">
+                <div class="iphone w-[min(260px,70%)] md:h-full md:max-h-[620px] md:w-auto">
+                  <Image src={s.img} alt={s.alt} widths={[300, 600]} sizes="300px" class="h-full w-full object-cover" loading="lazy" />
+                </div>
+              </div>
+            )}
+          </article>
+        ))}
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+  import { gsap } from 'gsap';
+  import { ScrollTrigger } from 'gsap/ScrollTrigger';
+
+  gsap.registerPlugin(ScrollTrigger);
+
+  const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const root = document.getElementById('tour-root');
+  const track = document.getElementById('tour-track');
+
+  const distance = () => (track ? track.scrollWidth - window.innerWidth + 128 : 0);
+
+  // The pinned stretch has to be as long as the horizontal travel, or the last
+  // slides slide past before the pin lets go. Size it from the track itself.
+  function sizeRoot() {
+    if (!root) return;
+    const pinned = window.innerWidth >= 768 && !reduceMotion;
+    root.style.height = pinned ? `${distance() + window.innerHeight}px` : '';
+  }
+
+  function init() {
+    if (!root || !track) return;
+    sizeRoot();
+    if (window.innerWidth < 768 || reduceMotion) return;
+
+    gsap.to(track, {
+      x: () => -distance(),
+      ease: 'none',
+      scrollTrigger: {
+        trigger: root,
+        start: 'top top',
+        end: () => '+=' + distance(),
+        scrub: 0.6,
+        invalidateOnRefresh: true,
+      },
+    });
+  }
+
+  init();
+  window.addEventListener('resize', () => {
+    sizeRoot();
+    ScrollTrigger.refresh();
+  });
+</script>

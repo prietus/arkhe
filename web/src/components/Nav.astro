@@ -1,0 +1,30 @@
+---
+import { Image } from 'astro:assets';
+import icon from '../assets/icon.png';
+import { APP_STORE_URL } from '../data';
+
+// Section links point at the home page so they also work from /privacy and /support.
+const links = [
+  { href: '/#tour', label: 'Tour' },
+  { href: '/#how', label: 'How it works' },
+  { href: '/#features', label: 'Features' },
+  { href: '/support', label: 'Support' },
+];
+---
+
+<header class="sticky top-0 z-40 border-b border-ink-800/70 bg-ink-950/70 backdrop-blur-xl">
+  <nav class="container-wide flex items-center justify-between gap-4 py-4">
+    <a href="/" class="flex items-center gap-3">
+      <Image src={icon} alt="" width={36} height={36} class="h-9 w-9 rounded-lg shadow-glow" loading="eager" />
+      <span class="font-display text-lg font-semibold tracking-tight">Arkhe</span>
+    </a>
+    <div class="hidden items-center gap-8 text-sm text-ink-300 md:flex">
+      {links.map((l) => <a href={l.href} class="transition hover:text-ink-100">{l.label}</a>)}
+    </div>
+    {APP_STORE_URL ? (
+      <a href={APP_STORE_URL} target="_blank" rel="noopener" class="btn-primary !px-4 !py-2 text-xs">App Store</a>
+    ) : (
+      <a href="/support" class="btn-ghost !px-4 !py-2 text-xs">Support</a>
+    )}
+  </nav>
+</header>

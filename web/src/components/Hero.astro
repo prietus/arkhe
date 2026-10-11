@@ -1,0 +1,69 @@
+---
+import { Image } from 'astro:assets';
+import icon from '../assets/icon.png';
+import ipadChat from '../assets/screenshots/ipad-chat.png';
+import iphoneChat from '../assets/screenshots/iphone-chat.png';
+import AppStoreButton from './AppStoreButton.astro';
+---
+
+<section class="relative overflow-hidden">
+  <div class="grid-bg absolute inset-0" aria-hidden="true"></div>
+  <div class="container-wide relative grid gap-16 pb-24 pt-16 sm:pt-24 lg:grid-cols-[1fr_1.15fr] lg:items-center lg:gap-12">
+    <div class="flex flex-col items-center text-center lg:items-start lg:text-left">
+      <Image
+        src={icon}
+        alt="Arkhe app icon"
+        width={120}
+        height={120}
+        class="h-24 w-24 rounded-[22px] shadow-glow sm:h-28 sm:w-28"
+        loading="eager"
+      />
+
+      <div class="mt-6 flex flex-wrap items-center justify-center gap-2 lg:justify-start">
+        <span class="chip">
+          <span class="h-1.5 w-1.5 rounded-full bg-emerald-400"></span>
+          iPhone &amp; iPad
+        </span>
+        <span class="chip">iOS 17+</span>
+        <span class="chip">Open source</span>
+        <span class="chip">No account · No tracking</span>
+      </div>
+
+      <p class="eyebrow mt-8">A native IRCv3 client</p>
+      <h1 class="mt-4 text-balance text-4xl font-semibold tracking-tight sm:text-6xl">
+        IRC that keeps up
+        <span class="italic text-signal">with you.</span>
+      </h1>
+      <p class="mt-6 max-w-xl text-pretty text-base text-ink-300 sm:text-lg">
+        Arkhe is a fast, native IRC client for iPhone and iPad, built for IRCv3 and for bouncers
+        like soju. Your bouncer stays online; Arkhe picks up exactly where you left off, with the
+        history, reactions and notifications you expect from a modern chat app.
+      </p>
+
+      <!-- The path a message takes, in one line -->
+      <div class="mt-7 flex flex-wrap items-center justify-center gap-2 font-mono text-[11px] uppercase tracking-widest text-ink-300 lg:justify-start">
+        <span class="rounded-md border border-ink-600 bg-ink-800/60 px-2.5 py-1">IRC network</span>
+        <span class="text-signal text-base">→</span>
+        <span class="rounded-md border border-ink-600 bg-ink-800/60 px-2.5 py-1">Your bouncer</span>
+        <span class="text-signal text-base">→</span>
+        <span class="rounded-md border border-accent/50 bg-accent/10 px-2.5 py-1 text-accent-hi">Arkhe</span>
+      </div>
+
+      <div class="mt-9 flex flex-col items-center gap-3 sm:flex-row">
+        <AppStoreButton class="text-[15px]" />
+        <a href="#tour" class="btn-ghost">Take the tour</a>
+      </div>
+    </div>
+
+    <!-- iPad with an iPhone in front. -->
+    <div class="relative mx-auto w-full max-w-[680px] pb-10 lg:pb-16">
+      <div class="absolute inset-8 -z-10 rounded-full bg-signal-blue/25 blur-[120px]" aria-hidden="true"></div>
+      <div class="ipad w-[90%]">
+        <Image src={ipadChat} alt="Arkhe on iPad: networks and channels in the sidebar, a channel with a link preview and an inline image" widths={[600, 900, 1300]} sizes="(min-width: 1024px) 600px, 90vw" class="h-full w-full object-cover" loading="eager" />
+      </div>
+      <div class="iphone absolute -bottom-2 right-0 w-[30%] shadow-glow">
+        <Image src={iphoneChat} alt="Arkhe on iPhone: a channel with timestamps, nick colours and an inline image" widths={[240, 400]} sizes="200px" class="h-full w-full object-cover" loading="eager" />
+      </div>
+    </div>
+  </div>
+</section>

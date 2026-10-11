@@ -1,0 +1,24 @@
+---
+// The IRCv3 extensions Arkhe speaks.
+const chips = [
+  'sasl', 'SCRAM-SHA-256', 'CertFP', 'draft/chathistory', 'draft/read-marker', 'draft/multiline',
+  'message-tags', 'server-time', 'batch', 'labeled-response', 'echo-message', 'away-notify',
+  'account-tag', 'setname', 'standard-replies', 'draft/message-redaction', 'no-implicit-names',
+  '+typing', '+draft/react', '+draft/reply', 'filehost', 'soju.im/webpush', 'soju.im/bouncer-networks',
+];
+// Duplicate so the translate -50% loop is seamless.
+const doubled = [...chips, ...chips];
+---
+
+<section aria-hidden="true" class="relative overflow-hidden py-14 sm:py-20">
+  <div class="pointer-events-none absolute inset-y-0 left-0 z-10 w-20 bg-gradient-to-r from-ink-950 to-transparent"></div>
+  <div class="pointer-events-none absolute inset-y-0 right-0 z-10 w-20 bg-gradient-to-l from-ink-950 to-transparent"></div>
+  <div class="marquee-track flex w-max">
+    {doubled.map((c) => (
+      <div class="mx-2 flex items-center">
+        <span class="whitespace-nowrap font-mono text-xs tracking-[0.06em] text-ink-400">{c}</span>
+        <span class="mx-5 h-1 w-1 rounded-full bg-ink-700"></span>
+      </div>
+    ))}
+  </div>
+</section>

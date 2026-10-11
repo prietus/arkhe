@@ -1,0 +1,76 @@
+---
+import PageLayout from '../../layouts/PageLayout.astro';
+import { SUPPORT_EMAIL, PUSH_RELAY } from '../../data';
+---
+
+<PageLayout
+  title="Privacy Policy"
+  eyebrow="Privacy"
+  description="Arkhe collects no data. It talks to the IRC servers and bouncers you configure; optional push notifications pass through a content-blind relay."
+>
+  <h1 class="mt-3">Privacy Policy</h1>
+  <p class="!mt-2 text-sm text-ink-400">Arkhe for iPhone &amp; iPad · Last updated: October 11, 2026</p>
+
+  <p>
+    Arkhe ("the app") is an IRC client. It connects to IRC servers and bouncers that <em>you</em>
+    choose. There are no Arkhe accounts, no analytics, no advertising SDKs and no telemetry of
+    any kind.
+  </p>
+
+  <div class="card mt-8 !p-6">
+    <p class="!mt-0"><strong>Short version:</strong> we do not collect, store, sell or share your
+    personal data. Your settings and recent history stay on your device, and your conversations
+    go directly to the servers you configure. The one service we run, the optional push relay,
+    only ever sees encrypted notifications it cannot read.</p>
+  </div>
+
+  <h2>What stays on your device</h2>
+  <p>The app stores the following locally, in its own sandbox and in the iOS Keychain:</p>
+  <table class="mt-4">
+    <thead><tr><th>Item</th><th>Where</th></tr></thead>
+    <tbody>
+      <tr><td>Server and bouncer settings, nicknames and app preferences</td><td>App storage</td></tr>
+      <tr><td>Passwords, SASL credentials, client-certificate passphrases and an optional uploader token</td><td>iOS Keychain (encrypted)</td></tr>
+      <tr><td>Recent conversation history (the last 500 lines per conversation), so chats open instantly. You can turn this off in Settings, which deletes it</td><td>App storage</td></tr>
+      <tr><td>The encryption keys used to decrypt push notifications</td><td>iOS Keychain, shared with the app’s notification extension</td></tr>
+    </tbody>
+  </table>
+  <p>All of this is removed when you delete the app.</p>
+
+  <h2>What the app connects to</h2>
+  <p><strong>The IRC servers and bouncers you configure.</strong> Your nickname, messages and
+  connection details go directly to them. They are run by third parties (or by you) and are
+  governed by their own policies, not this one. We have no access to those connections.</p>
+
+  <p><strong>File uploads, only when you attach something.</strong> If your server offers a file
+  host, the file is uploaded there, signed in with your server login. Otherwise it goes to the
+  custom uploader you configured. We do not operate either and never receive your files.</p>
+
+  <p><strong>Images and link previews.</strong> When <em>Load images &amp; link previews</em> is
+  on (Settings → Media), the app fetches images and page previews for links posted in your
+  conversations. Like opening any link, this reveals your IP address to the site hosting them.
+  Turn it off to only fetch content when you tap a link.</p>
+
+  <p><strong>Push notifications, optional and off by default.</strong> If you turn on
+  <em>Push when app is closed</em>, your bouncer encrypts each notification for your device
+  (Web Push, RFC 8291) and sends it to our relay at <code>{PUSH_RELAY}</code>, which forwards it to
+  Apple’s Push Notification service. The relay sees only the encrypted payload, your device’s
+  push token and the address of your bouncer. It cannot read the notifications, keeps no
+  access logs and stores nothing. Delivery through Apple is governed by Apple’s privacy policy.
+  You can point the app at a relay you run yourself.</p>
+
+  <p>The app contacts no other services: no analytics, no crash reporting, no advertising
+  networks.</p>
+
+  <h2>Data sharing</h2>
+  <p>We do not sell, share or disclose your data, because we do not collect it.</p>
+
+  <h2>Children’s privacy</h2>
+  <p>Arkhe is not directed at children and does not collect personal information from anyone.</p>
+
+  <h2>Changes to this policy</h2>
+  <p>If the app’s data practices change, we will update this page and the date above.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about privacy? Write to <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>.</p>
+</PageLayout>

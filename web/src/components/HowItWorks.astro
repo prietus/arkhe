@@ -1,0 +1,72 @@
+---
+---
+
+<section id="how" class="relative scroll-mt-20 border-y border-ink-800/60 bg-ink-900/40 py-24 sm:py-32">
+  <div class="container-wide grid gap-12 md:grid-cols-[1.05fr_1fr] md:items-center md:gap-16">
+    <!-- min-w-0: the <pre> below would otherwise widen the grid track past the viewport. -->
+    <div class="min-w-0">
+      <span class="eyebrow">How it works</span>
+      <h2 class="mt-3 text-balance text-3xl font-semibold tracking-tight sm:text-5xl">
+        Your bouncer stays online. Arkhe catches up.
+      </h2>
+      <p class="mt-5 text-pretty text-ink-300 sm:text-lg">
+        A phone can’t hold an IRC connection open all day, and it shouldn’t have to. A bouncer
+        keeps you in your channels around the clock; Arkhe speaks the IRCv3 extensions that let it
+        sync with the bouncer in seconds whenever you open it.
+      </p>
+      <ul class="mt-8 space-y-3 text-sm text-ink-300">
+        <li class="flex items-start gap-3">
+          <span class="cat-badge mt-0.5">01 CONNECT</span>
+          <span>
+            Sign in with SASL. Arkhe upgrades to SCRAM-SHA-256 when the server supports it, or uses
+            a client certificate (CertFP) with no password at all.
+          </span>
+        </li>
+        <li class="flex items-start gap-3">
+          <span class="cat-badge mt-0.5">02 SYNC</span>
+          <span>
+            Recent history is kept on the device, so chats open instantly. Chat history then fills
+            in only what you missed, and read markers keep every device on the same page.
+          </span>
+        </li>
+        <li class="flex items-start gap-3">
+          <span class="cat-badge mt-0.5">03 NOTIFY</span>
+          <span>
+            With the app closed, your bouncer sends mentions and private messages as end-to-end
+            encrypted Web Push. Only your device can read them.
+          </span>
+        </li>
+      </ul>
+    </div>
+
+    <div class="relative min-w-0">
+      <div class="absolute inset-0 -z-10 bg-signal-blue/10 blur-[80px]" aria-hidden="true"></div>
+      <div class="card !p-8">
+        <div class="mb-5 flex items-center justify-between text-xs text-ink-400">
+          <span class="font-mono uppercase tracking-widest">on the wire</span>
+          <span class="cat-badge">IRCv3</span>
+        </div>
+        <pre class="wire overflow-x-auto"><span class="out">» CAP LS 302</span>
+<span class="in">« CAP * LS :sasl=PLAIN,SCRAM-SHA-256 draft/chathistory</span>
+<span class="in">    draft/read-marker message-tags labeled-response …</span>
+<span class="out">» AUTHENTICATE SCRAM-SHA-256</span>
+<span class="in">« 903 :SASL authentication successful</span>
+<span class="out">» CAP END</span>
+<span class="in">« :you JOIN #channel</span>
+<span class="out">» CHATHISTORY AFTER #channel timestamp=… 100</span>
+<span class="in">« BATCH +1 chathistory #channel</span>
+<span class="dim">   … only the messages you missed …</span>
+<span class="in">« BATCH -1</span></pre>
+        <div class="mt-6 rounded-xl border border-ink-700 bg-ink-950/60 p-4 font-mono text-xs text-ink-400">
+          <div class="flex justify-between gap-4"><span>works with</span><span class="text-right text-ink-200">soju, Ergo, any IRC network</span></div>
+          <div class="mt-1 flex justify-between gap-4"><span>sign-in</span><span class="text-right text-ink-200">SASL PLAIN · SCRAM · CertFP</span></div>
+          <div class="mt-1 flex justify-between gap-4"><span>transport</span><span class="text-right text-ink-200">TLS</span></div>
+        </div>
+        <p class="mt-6 text-xs text-ink-400">
+          No bouncer? Arkhe connects directly to any network too. You just won’t get history from
+          while you were away.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>

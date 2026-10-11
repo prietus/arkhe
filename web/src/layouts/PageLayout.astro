@@ -1,0 +1,21 @@
+---
+import Layout from './Layout.astro';
+
+interface Props {
+  title: string;
+  description: string;
+  eyebrow: string;
+}
+
+const { title, description, eyebrow } = Astro.props;
+---
+
+<Layout title={`${title} — Arkhe`} description={description}>
+  <main class="relative">
+    <div class="grid-bg absolute inset-x-0 top-0 h-80" aria-hidden="true"></div>
+    <article class="container-prose prose-page relative pb-28 pt-16 sm:pt-24">
+      <span class="eyebrow">{eyebrow}</span>
+      <slot />
+    </article>
+  </main>
+</Layout>

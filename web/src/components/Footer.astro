@@ -1,0 +1,25 @@
+---
+import { APP_STORE_URL, SUPPORT_EMAIL, SOURCE_URL } from '../data';
+const year = new Date().getFullYear();
+---
+
+<footer class="border-t border-ink-800/80 bg-ink-950/50 py-12">
+  <div class="container-wide">
+    <div class="flex flex-col items-start justify-between gap-6 sm:flex-row sm:items-center">
+      <a href="/" class="font-display text-lg font-semibold tracking-tight text-ink-100">Arkhe</a>
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm text-ink-300">
+        {APP_STORE_URL && <a href={APP_STORE_URL} target="_blank" rel="noopener" class="hover:text-ink-100">App Store</a>}
+        <a href={SOURCE_URL} target="_blank" rel="noopener" class="hover:text-ink-100">Source code</a>
+        <a href="/support" class="hover:text-ink-100">Support</a>
+        <a href="/privacy" class="hover:text-ink-100">Privacy Policy</a>
+        <a href={`mailto:${SUPPORT_EMAIL}`} class="hover:text-ink-100">Contact</a>
+      </div>
+    </div>
+    <p class="mt-8 max-w-3xl text-xs text-ink-400">
+      Arkhe is an independent IRC client. It is not affiliated with any IRC network or bouncer
+      project; network and software names belong to their respective owners. The source code is
+      available under the Apache 2.0 license; the Arkhe name and icon are not.
+      &copy; {year} Carlos Prieto.
+    </p>
+  </div>
+</footer>

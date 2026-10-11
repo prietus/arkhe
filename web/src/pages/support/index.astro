@@ -1,0 +1,93 @@
+---
+import PageLayout from '../../layouts/PageLayout.astro';
+import { SUPPORT_EMAIL, SOURCE_URL } from '../../data';
+
+const faqs = [
+  {
+    q: 'What do I need to get started?',
+    a: 'Access to an <strong>IRC network</strong> or an <strong>IRC bouncer</strong>. Tap <strong>+</strong> in the sidebar, enter the host and port and keep <strong>TLS</strong> on. To try Arkhe right away, pick Libera.Chat or the Ergo testnet under <strong>Popular networks</strong> and tap Save.',
+  },
+  {
+    q: 'Do I need a bouncer?',
+    a: 'No, Arkhe connects directly to any IRC server. A bouncer such as soju stays connected on your behalf, so you get the history from while you were away, read markers across devices and push notifications with the app closed.',
+  },
+  {
+    q: 'How do I connect to a soju bouncer?',
+    a: '<p>Add your bouncer as a server and turn on <strong>This is a bouncer (soju)</strong>. Use SASL with your soju username and password.</p><p>To connect to one network on the bouncer, add it to the username and the SASL account as <code>username/network</code> (for example <code>alice/libera</code>). Leave it out of the nickname: IRC nicknames cannot contain <code>/</code>.</p>',
+  },
+  {
+    q: 'Which sign-in methods are supported?',
+    a: '<p><strong>SASL PLAIN</strong> with a username and password. When the server also offers <strong>SCRAM-SHA-256</strong>, Arkhe uses it automatically, so the password itself never crosses the wire.</p><p><strong>SASL EXTERNAL (CertFP)</strong> signs in with a client certificate: import a <code>.p12</code>, choose EXTERNAL, then register the SHA-256 fingerprint Arkhe shows with your network (for example <code>/msg NickServ CERT ADD</code>).</p>',
+  },
+  {
+    q: 'How do I get notifications when the app is closed?',
+    a: '<p>You need a bouncer that supports Web Push (soju does). In Settings, turn on <strong>Push when app is closed</strong> and allow notifications. Arkhe registers with the bouncer automatically.</p><p>Notifications are end-to-end encrypted between your bouncer and your device. While the app is open, or was just closed, mentions and private messages notify you without a bouncer.</p>',
+  },
+  {
+    q: 'How do I attach a photo or file?',
+    a: 'Tap the paperclip in the message bar, or drag a file onto it on iPad. If your server or bouncer offers a file host, Arkhe uses it with your existing login. Otherwise, set up your own uploader in <strong>Settings → Upload</strong>. The link is added to your message for you to send.',
+  },
+  {
+    q: 'Why don’t other people see my reactions?',
+    a: 'Some networks choose not to relay reactions and replies between users. Libera.Chat, for example, only relays typing indicators. Your reactions still sync across your own devices through your bouncer, and Arkhe tells you in the status window when a network blocks them.',
+  },
+  {
+    q: 'Where is my history and how do I clear it?',
+    a: 'Your bouncer holds the full history. Arkhe keeps the most recent lines of each conversation on the device so chats open instantly, and fetches older ones when you scroll up. Turn off <strong>Keep history on device</strong> in Settings to stop this and delete what is stored.',
+  },
+  {
+    q: 'How do I close a channel?',
+    a: 'Swipe left on the channel in the sidebar and tap <strong>Close</strong>, or type <code>/part</code>. To join one, use the Join button in a chat or type <code>/join #channel</code>.',
+  },
+  {
+    q: 'Something isn’t working. How can I see what’s happening?',
+    a: 'Open the protocol log (the terminal button at the top of a chat). It shows the raw IRC traffic, with passwords and sign-in data already hidden, which helps a lot when reporting a problem.',
+  },
+];
+---
+
+<PageLayout
+  title="Support"
+  eyebrow="Support"
+  description="Get help with Arkhe: connecting to IRC networks and soju bouncers, SASL and CertFP sign-in, push notifications and frequently asked questions."
+>
+  <h1 class="mt-3">Support</h1>
+  <p>Questions, bugs, suggestions? We answer as soon as we can.</p>
+
+  <div class="card mt-10 !p-8">
+    <h2 class="!mt-0">Contact</h2>
+    <p>
+      Write to <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>. When reporting a problem,
+      please include if you can:
+    </p>
+    <ul>
+      <li>Your device and iOS version</li>
+      <li>The Arkhe version</li>
+      <li>The network or bouncer you connect to, and its software if you know it</li>
+      <li>What you expected and what happened instead, plus a few lines of the protocol log</li>
+    </ul>
+    <p>
+      Arkhe is open source: you can also browse or report issues on
+      <a href={SOURCE_URL} target="_blank" rel="noopener">GitHub</a>.
+    </p>
+  </div>
+
+  <h2>Requirements</h2>
+  <ul>
+    <li>iPhone or iPad with <strong>iOS 17 or later</strong>.</li>
+    <li>Access to an <strong>IRC network</strong> or an <strong>IRC bouncer</strong>.</li>
+  </ul>
+
+  <h2>Frequently asked questions</h2>
+  <div class="mt-6 divide-y divide-ink-800 border-y border-ink-800">
+    {faqs.map((f) => (
+      <details class="group py-5">
+        <summary class="flex cursor-pointer list-none items-center justify-between gap-6 font-sans text-base font-semibold text-ink-100">
+          {f.q}
+          <span class="text-accent-hi transition group-open:rotate-45" aria-hidden="true">+</span>
+        </summary>
+        <div class="faq-answer" set:html={f.a.trim().startsWith('<') ? f.a : `<p>${f.a}</p>`} />
+      </details>
+    ))}
+  </div>
+</PageLayout>
