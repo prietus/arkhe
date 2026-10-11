@@ -1,3 +1,6 @@
-Initial release.
-
-Arkhe is a native IRCv3 client for iPhone and iPad with SASL, CertFP and full IRC bouncer support.
+• Conversations open instantly: recent history is kept on your device and only what you missed is fetched when you reconnect.
+• Upload files straight to your bouncer: if your server offers a file host (e.g. soju), the attach button uses it with your existing login.
+• Tap the arrow on a reply to jump to the original message, even when it's further back in history.
+• Stronger sign-in: Arkhe now uses SCRAM-SHA-256 when the server supports it, so your password never crosses the wire.
+• Fixed loading older history on some bouncers, and catching up channels after a reconnect.
+• Faster joins on networks that support no-implicit-names, and more reliable end-of-history detection.

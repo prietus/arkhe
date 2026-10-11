@@ -48,8 +48,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: im.arkhe.client
-        MARKETING_VERSION: "1.1.0"
-        CURRENT_PROJECT_VERSION: "3"
+        MARKETING_VERSION: "1.2.0"
+        CURRENT_PROJECT_VERSION: "4"
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "6.0"
         CODE_SIGN_STYLE: Automatic
@@ -83,8 +83,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: im.arkhe.client.NotificationService
-        MARKETING_VERSION: "1.1.0"
-        CURRENT_PROJECT_VERSION: "3"
+        MARKETING_VERSION: "1.2.0"
+        CURRENT_PROJECT_VERSION: "4"
         TARGETED_DEVICE_FAMILY: "1,2"
         SWIFT_VERSION: "6.0"
         CODE_SIGN_STYLE: Automatic
