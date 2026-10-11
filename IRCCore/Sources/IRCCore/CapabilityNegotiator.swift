@@ -34,7 +34,20 @@ public struct CapabilityNegotiator: Sendable {
     private var pendingLS: [Capability] = []
     private var requested: Set<String> = []
 
-    public init(desired: Set<String> = CapabilityName.desired, mechanism: SASLMechanism? = nil) {
+    /// The mechanism actually in use: the configured one, or SCRAM-SHA-256 when
+    /// PLAIN was configured and the server offers SCRAM.
+    public private(set) var activeMechanism: SASLMechanism?
+    private var scram: SCRAMClient?
+    /// Base64 of a server challenge split over several 400-byte AUTHENTICATEs.
+    private var challengeBuffer = ""
+    /// Set once SCRAM failed and we retried with the configured PLAIN.
+    private var didFallBack = false
+    /// Fixed SCRAM client nonce, for test vectors only.
+    private let scramNonce: String?
+
+    public init(desired: Set<String> = CapabilityName.desired, mechanism: SASLMechanism? = nil,
+                scramNonce: String? = nil) {
+        self.scramNonce = scramNonce
         // Only request `sasl` when we actually have credentials to offer.
         if mechanism == nil {
             self.desired = desired.subtracting([CapabilityName.sasl])
@@ -118,9 +131,9 @@ public struct CapabilityNegotiator: Sendable {
         for cap in caps { enabled.insert(cap.name) }
 
         // If SASL was negotiated and we have a usable mechanism, start it.
-        if enabled.contains(CapabilityName.sasl), let mechanism, saslSupported(mechanism) {
+        if enabled.contains(CapabilityName.sasl), let mechanism = preferredMechanism() {
             phase = .authenticating
-            return [.authenticate(mechanism.name)]
+            return begin(mechanism)
         }
         return finish()
     }
@@ -132,14 +145,74 @@ public struct CapabilityNegotiator: Sendable {
 
     // MARK: - SASL
 
+    /// The configured mechanism, upgraded from PLAIN to SCRAM-SHA-256 when the
+    /// server lists it. `nil` if the server doesn't offer what we have.
+    private func preferredMechanism() -> SASLMechanism? {
+        guard let mechanism else { return nil }
+        if case let .plain(authcid, password, authzid) = mechanism, authzid.isEmpty,
+           let cap = available.first(where: { $0.name == CapabilityName.sasl }),
+           cap.values.contains("SCRAM-SHA-256") {
+            return .scramSHA256(authcid: authcid, password: password)
+        }
+        return saslSupported(mechanism) ? mechanism : nil
+    }
+
+    private mutating func begin(_ mechanism: SASLMechanism) -> [IRCMessage] {
+        activeMechanism = mechanism
+        scram = nil
+        challengeBuffer = ""
+        return [.authenticate(mechanism.name)]
+    }
+
     private mutating func handleAuthenticate(_ message: IRCMessage) -> [IRCMessage] {
-        guard phase == .authenticating, let mechanism else { return [] }
-        // Server prompts with `AUTHENTICATE +` (or a challenge). For PLAIN and
-        // EXTERNAL we always reply with our (pre-computed) response.
+        guard phase == .authenticating, let mechanism = activeMechanism else { return [] }
+        // Server prompts with `AUTHENTICATE +` or a base64 challenge, which may
+        // span several lines: a full 400-byte chunk means more follows.
         let payload = message.first ?? "+"
-        _ = SASL.decodeChallenge(payload) // challenge ignored for PLAIN/EXTERNAL
-        guard let response = SASL.initialResponse(for: mechanism) else { return [] }
-        return SASL.chunkedPayloads(for: response).map { .authenticate($0) }
+        if payload != "+" {
+            challengeBuffer += payload
+            if payload.count == 400 { return [] }
+        }
+        let challenge = challengeBuffer.isEmpty ? Data() : Data(base64Encoded: challengeBuffer)
+        challengeBuffer = ""
+
+        switch mechanism {
+        case .plain, .external:
+            // Challenge ignored: we reply with our pre-computed response.
+            guard let response = SASL.initialResponse(for: mechanism) else { return [] }
+            return SASL.chunkedPayloads(for: response).map { .authenticate($0) }
+        case let .scramSHA256(authcid, password):
+            if scram == nil {
+                var client = SCRAMClient(username: authcid, password: password, nonce: scramNonce)
+                let first = client.clientFirst()
+                scram = client
+                return SASL.chunkedPayloads(for: first).map { .authenticate($0) }
+            }
+            guard var client = scram, let challenge else { return abort("Malformed SCRAM challenge") }
+            switch client.step {
+            case .sentFirst:
+                guard let final = client.clientFinal(serverFirst: challenge) else {
+                    return abort("Malformed SCRAM challenge")
+                }
+                scram = client
+                return SASL.chunkedPayloads(for: final).map { .authenticate($0) }
+            case .sentFinal:
+                // A wrong server signature means the server doesn't know our
+                // credentials — possibly an impostor. Never fall back to PLAIN.
+                guard client.verify(serverFinal: challenge) else {
+                    return abort("SCRAM server signature mismatch")
+                }
+                return [.authenticate("+")]
+            case .initial:
+                return []
+            }
+        }
+    }
+
+    /// Cancels the exchange (`AUTHENTICATE *`) and ends registration.
+    private mutating func abort(_ reason: String) -> [IRCMessage] {
+        saslResult = .failed(reason)
+        return [.authenticate("*")] + finish()
     }
 
     private mutating func handleNumeric(_ numeric: IRCNumeric, _ message: IRCMessage) -> [IRCMessage] {
@@ -152,6 +225,13 @@ public struct CapabilityNegotiator: Sendable {
             }
             return [] // loggedIn (900) precedes 903; wait for success
         case .saslFail, .saslTooLong, .saslAborted, .nickLocked, .saslAlready:
+            // SCRAM may be rejected for an account that has no SCRAM credentials
+            // (hashes predating it): retry once with the configured PLAIN.
+            if numeric == .saslFail, case .scramSHA256 = activeMechanism, !didFallBack,
+               let mechanism, case .plain = mechanism, saslSupported(mechanism) {
+                didFallBack = true
+                return begin(mechanism)
+            }
             saslResult = .failed(message.trailing ?? numeric.description)
             return finish()
         default:

@@ -4,16 +4,19 @@ import Foundation
 ///
 /// `PLAIN` sends username/password over the (already TLS-encrypted) link;
 /// `EXTERNAL` defers to the TLS client certificate (CertFP) and carries no
-/// secret of its own.
+/// secret of its own; `SCRAM-SHA-256` proves the password without sending it
+/// (chosen automatically over PLAIN when the server offers it).
 public enum SASLMechanism: Sendable, Equatable {
     case plain(authcid: String, password: String, authzid: String = "")
     case external(authzid: String = "")
+    case scramSHA256(authcid: String, password: String)
 
     /// The mechanism name advertised in `AUTHENTICATE <name>`.
     public var name: String {
         switch self {
         case .plain: return "PLAIN"
         case .external: return "EXTERNAL"
+        case .scramSHA256: return "SCRAM-SHA-256"
         }
     }
 }
@@ -37,6 +40,8 @@ public enum SASL {
             return bytes
         case let .external(authzid):
             return Data(authzid.utf8)
+        case .scramSHA256:
+            return nil // multi-step; driven by `SCRAMClient`
         }
     }
 

@@ -621,7 +621,8 @@ final class IRCSession: Identifiable {
             saslMessage = reason
             addStatus("⚠️ SASL failed: \(reason)", kind: .error)
         } else if case .succeeded = negotiator.saslResult {
-            addStatus("Authenticated via SASL (\(config.saslMode.rawValue.uppercased())).", kind: .event)
+            let mechanism = negotiator.activeMechanism?.name ?? config.saslMode.rawValue.uppercased()
+            addStatus("Authenticated via SASL (\(mechanism)).", kind: .event)
         }
         // Only the account/control session enumerates networks; a session already
         // bound to one network must not (it would recurse).
