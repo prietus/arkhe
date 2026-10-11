@@ -36,6 +36,25 @@ struct ServerEditView: View {
 
     var body: some View {
         Form {
+            if server == nil {
+                Section {
+                    ForEach(NetworkPreset.all) { preset in
+                        Button {
+                            apply(preset)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(preset.name).foregroundStyle(.primary)
+                                Text(preset.blurb).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Popular networks")
+                } footer: {
+                    Text("Fills in the form with a guest nick — tweak anything before saving.")
+                }
+            }
+
             Section("Server") {
                 TextField("Name", text: $name)
                 TextField("Host", text: $host)
@@ -144,6 +163,20 @@ struct ServerEditView: View {
         return try? TLSIdentity(pkcs12: certificateData, passphrase: certificatePassphrase).sha256Fingerprint
     }
 
+    /// Prefills the form from a preset. Nicks get a random suffix because IRC
+    /// nicks are unique per network — a fixed one would collide as soon as two
+    /// users connected at once.
+    private func apply(_ preset: NetworkPreset) {
+        name = preset.name
+        host = preset.host
+        port = 6697
+        useTLS = true
+        isBouncer = false
+        saslMode = .none
+        nickname = String(format: "arkhe-%04d", Int.random(in: 0...9999))
+        autoJoin = preset.autoJoin
+    }
+
     // MARK: - Load / save
 
     private func load() {
@@ -222,4 +255,26 @@ struct ServerEditView: View {
             certificateError = error.localizedDescription
         }
     }
+}
+
+/// One-tap starting points for the new-server form. Both connect over TLS on
+/// 6697 with no account: Libera as the big general-purpose network, and the
+/// public Ergo testnet as the IRCv3 showcase (reactions, replies, redaction).
+private struct NetworkPreset: Identifiable {
+    let name: String
+    let host: String
+    let autoJoin: String
+    let blurb: String
+    var id: String { host }
+
+    static let all: [NetworkPreset] = [
+        NetworkPreset(name: "Libera.Chat",
+                      host: "irc.libera.chat",
+                      autoJoin: "#libera",
+                      blurb: "The largest open-source network — no account needed"),
+        NetworkPreset(name: "Ergo testnet",
+                      host: "testnet.ergo.chat",
+                      autoJoin: "#chat",
+                      blurb: "Public IRCv3 playground — reactions, replies, history"),
+    ]
 }
