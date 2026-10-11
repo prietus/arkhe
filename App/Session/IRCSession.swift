@@ -154,6 +154,24 @@ final class IRCSession: Identifiable {
     private(set) var aroundContext: AroundContext?
     /// The `AROUND` request is sent; its chathistory batch hasn't opened yet.
     private var aroundAwaitingBatch = false
+    /// Paging back through a buffer looking for a reply's original, on servers
+    /// that only take timestamp references (soju) and so can't do AROUND by msgid.
+    private var originalSeek: (bufferKey: String, bufferName: String, msgid: String, pagesLeft: Int)?
+    private static let maxSeekPages = 5
+
+    /// A line the chat view should scroll to (a reply's original, found by
+    /// paging back). The view consumes it with `consumeJump()`.
+    struct JumpRequest: Equatable {
+        var bufferID: UUID
+        var lineID: UUID
+    }
+    private(set) var jumpRequest: JumpRequest?
+
+    /// Whether CHATHISTORY takes `msgid=` references here (`MSGREFTYPES`).
+    /// soju only takes timestamps and FAILs a msgid bound.
+    private var acceptsMsgidReferences: Bool {
+        isupport.messageReferenceTypes.contains("msgid")
+    }
 
     /// WHOX query-type token echoed back in the `t` field, so we only act on WHO
     /// replies we asked for (not ones triggered by a user `/whois`).
@@ -1012,6 +1030,7 @@ final class IRCSession: Identifiable {
                     let reachedStart = info.isEndOfHistory || info.messageCount == 0
                         || (!serverSignalsHistoryEnd && info.messageCount < Self.historyPageSize)
                     if reachedStart { buffer.historyExhausted = true }
+                    advanceOriginalSeek(in: buffer)
                 }
                 if info.isCatchUp {
                     catchUpTargets = catchUpTargets.filter { !isupport.equalIdentifiers($0, target) }
@@ -1189,6 +1208,47 @@ final class IRCSession: Identifiable {
 
     // MARK: - Reply context (CHATHISTORY AROUND)
 
+    /// Shows the original of a reply that's older than the loaded scrollback:
+    /// `CHATHISTORY AROUND` into a sheet where the server takes msgid references,
+    /// otherwise (soju) page back through the timeline until it appears.
+    func showOriginal(of msgid: String, in buffer: Buffer) {
+        if acceptsMsgidReferences {
+            loadContext(around: msgid, in: buffer)
+            return
+        }
+        guard enabledCaps.contains(CapabilityName.chathistory), status == .connected,
+              !buffer.historyExhausted else {
+            aroundContext = AroundContext(target: buffer.name, msgid: msgid, isLoading: false, failed: true)
+            return
+        }
+        originalSeek = (isupport.caseMapping.fold(buffer.name), buffer.name, msgid, Self.maxSeekPages - 1)
+        // If a page is already in flight, its arrival advances the seek.
+        loadMoreHistory(for: buffer)
+    }
+
+    func consumeJump() { jumpRequest = nil }
+
+    /// After an older page lands: jump if the original showed up, else keep
+    /// paging back while pages and budget remain.
+    private func advanceOriginalSeek(in buffer: Buffer) {
+        guard var seek = originalSeek, seek.bufferKey == isupport.caseMapping.fold(buffer.name) else { return }
+        if let line = buffer.lines.first(where: { $0.msgid == seek.msgid }) {
+            originalSeek = nil
+            jumpRequest = JumpRequest(bufferID: buffer.id, lineID: line.id)
+        } else if seek.pagesLeft > 0, !buffer.historyExhausted {
+            seek.pagesLeft -= 1
+            originalSeek = seek
+            loadMoreHistory(for: buffer)
+        } else {
+            originalSeek = nil
+            failOriginal(seek.msgid, in: buffer.name)
+        }
+    }
+
+    private func failOriginal(_ msgid: String, in target: String) {
+        aroundContext = AroundContext(target: target, msgid: msgid, isLoading: false, failed: true)
+    }
+
     /// Fetches the messages around `msgid` — the original of a reply that's
     /// older than the loaded scrollback — into `aroundContext`.
     func loadContext(around msgid: String, in buffer: Buffer) {
@@ -1266,8 +1326,9 @@ final class IRCSession: Identifiable {
               !buffer.isLoadingHistory, !buffer.historyExhausted,
               let oldest = buffer.lines.first else { return }
         buffer.isLoadingHistory = true
-        // Prefer the stable msgid; fall back to a timestamp selector.
-        let selector = oldest.msgid.map { "msgid=\($0)" }
+        // Prefer the stable msgid where the server takes it (MSGREFTYPES);
+        // otherwise a timestamp selector.
+        let selector = oldest.msgid.flatMap { acceptsMsgidReferences ? "msgid=\($0)" : nil }
             ?? "timestamp=\(Self.timeFormatter.string(from: oldest.timestamp))"
         send(IRCMessage(command: "CHATHISTORY",
                         parameters: ["BEFORE", buffer.name, selector, "\(Self.historyPageSize)"]))
@@ -1368,8 +1429,16 @@ final class IRCSession: Identifiable {
         case "WARN": symbol = "⚠️"; kind = .error
         default:     symbol = "ℹ️"; kind = .event   // NOTE
         }
-        if message.command == "FAIL", command == "CHATHISTORY", aroundContext?.isLoading == true {
-            finishAroundContext(failed: true)
+        if message.command == "FAIL", command == "CHATHISTORY" {
+            if aroundContext?.isLoading == true { finishAroundContext(failed: true) }
+            // FAIL names no target, and requests are one-per-buffer: unblock them
+            // all rather than leave a buffer stuck "loading" forever.
+            for buffer in buffers { buffer.isLoadingHistory = false }
+            catchUpTargets.removeAll()
+            if let seek = originalSeek {
+                originalSeek = nil
+                failOriginal(seek.msgid, in: seek.bufferName)
+            }
         }
         let label2 = command == "*" ? code : "\(command) \(code)"
         addStatus("\(symbol) \(attribution)\(label2): \(description)", kind: kind)

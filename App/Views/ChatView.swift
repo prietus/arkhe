@@ -140,7 +140,7 @@ struct ChatView: View {
                                 if let target = ctx.lineID {
                                     proxy.scrollTo(target, anchor: .center)
                                 } else if let parent = line.replyTo {
-                                    session.loadContext(around: parent, in: buffer)
+                                    session.showOriginal(of: parent, in: buffer)
                                 }
                             } }
                         )
@@ -181,6 +181,16 @@ struct ChatView: View {
             // anchor can't linger and hijack a later live message.
             .onChange(of: buffer.isLoadingHistory) { _, loading in
                 if !loading { scrollAnchorID = nil }
+            }
+            // A reply's original found by paging back (servers without msgid
+            // references): let the new page lay out, then centre on it.
+            .onChange(of: session.jumpRequest) { _, request in
+                guard let request, request.bufferID == buffer.id else { return }
+                session.consumeJump()
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(100))
+                    withAnimation { proxy.scrollTo(request.lineID, anchor: .center) }
+                }
             }
             .task(id: buffer.id) {
                 unreadDividerID = buffer.firstUnreadID

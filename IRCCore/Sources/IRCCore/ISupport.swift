@@ -93,6 +93,13 @@ public struct ISupport: Sendable {
     /// The set of membership prefix symbols (e.g. `@`, `+`).
     public var prefixSymbols: Set<Character> { Set(prefixes.map(\.symbol)) }
 
+    /// `MSGREFTYPES`: the message reference types `CHATHISTORY` accepts, in the
+    /// server's order of preference (e.g. Ergo `msgid,timestamp`, soju
+    /// `timestamp`). Empty when not advertised.
+    public var messageReferenceTypes: [String] {
+        tokens["MSGREFTYPES"].map { $0.split(separator: ",").map(String.init) } ?? []
+    }
+
     /// The user mode letter that marks an account as a bot (IRCv3 Bot Mode),
     /// from the `BOT` ISUPPORT token (e.g. `BOT=B`). `nil` when unsupported.
     public var botMode: Character? {

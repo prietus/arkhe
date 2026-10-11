@@ -49,6 +49,13 @@ struct ISupportTests {
         #expect(isupport("BOT=XY").botMode == nil)
     }
 
+    @Test("MSGREFTYPES lists reference types in order")
+    func messageReferenceTypes() {
+        #expect(isupport("MSGREFTYPES=msgid,timestamp").messageReferenceTypes == ["msgid", "timestamp"])
+        #expect(isupport("MSGREFTYPES=timestamp").messageReferenceTypes == ["timestamp"])
+        #expect(isupport("NETWORK=x").messageReferenceTypes.isEmpty)
+    }
+
     @Test("FILEHOST: draft name wins, soju vendor name as fallback")
     func fileHostNames() {
         #expect(isupport("soju.im/FILEHOST=https://bnc.example/uploads")

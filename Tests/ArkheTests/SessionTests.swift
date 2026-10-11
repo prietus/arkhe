@@ -63,12 +63,13 @@ struct SessionTests {
     }
 
     /// Connects and completes registration with chathistory and friends.
-    func register() async {
+    /// `isupport` defaults to soju's: timestamp-only message references.
+    func register(isupport: String = "MSGREFTYPES=timestamp") async {
         session.connect()
         #expect(await sent("CAP LS 302"))
         let caps = "batch draft/chathistory message-tags server-time"
         await transport.receive(":srv CAP * LS :\(caps)", ":srv CAP * ACK :\(caps)",
-                                ":srv 001 me :Welcome")
+                                ":srv 001 me :Welcome", ":srv 005 me \(isupport) :are supported")
         #expect(await eventually { session.status == .connected })
     }
 
@@ -177,14 +178,14 @@ struct SessionTests {
 
     @Test("AROUND fills the context sheet, not the timeline")
     func aroundStaysOutOfTimeline() async throws {
-        await register()
+        await register(isupport: "MSGREFTYPES=msgid,timestamp")
         await transport.receive(":me!u@h JOIN #a")
         #expect(await sent("CHATHISTORY LATEST #a * 100"))
         await receive([":srv BATCH +b1 chathistory #a"] + Self.page("b1", "#a", count: 1, prefix: "a", startSecond: 500)
                       + [":srv BATCH -b1"])
         let channel = try #require(await eventually { buffer("#a")?.isLoadingHistory == false } ? buffer("#a") : nil)
 
-        session.loadContext(around: "p1", in: channel)
+        session.showOriginal(of: "p1", in: channel)
         #expect(await sent("CHATHISTORY AROUND #a msgid=p1 30"))
         await receive([":srv BATCH +x chathistory #a",
                        "@batch=x;msgid=p0;time=\(Self.time(1)) :bob!b@h PRIVMSG #a :before",
@@ -201,16 +202,74 @@ struct SessionTests {
 
     @Test("FAIL on AROUND marks the context unavailable and unblocks history")
     func aroundFail() async throws {
-        await register()
+        await register(isupport: "MSGREFTYPES=msgid,timestamp")
         await transport.receive(":me!u@h JOIN #a")
         await receive([":srv BATCH +b1 chathistory #a", ":srv BATCH -b1"])
         let channel = try #require(await eventually { buffer("#a")?.isLoadingHistory == false } ? buffer("#a") : nil)
 
-        session.loadContext(around: "zz", in: channel)
+        session.showOriginal(of: "zz", in: channel)
         #expect(await sent("CHATHISTORY AROUND #a msgid=zz 30"))
         await transport.receive(":srv FAIL CHATHISTORY INVALID_PARAMS AROUND :Unknown command")
         #expect(await eventually { session.aroundContext?.isLoading == false })
         #expect(session.aroundContext?.failed == true)
         #expect(channel.isLoadingHistory == false)
+    }
+
+    // MARK: - Timestamp-only servers (soju)
+
+    /// Joins `#a` and lands one full LATEST page (seconds 1000…1099).
+    func joinWithFullPage() async throws -> Buffer {
+        await transport.receive(":me!u@h JOIN #a")
+        #expect(await sent("CHATHISTORY LATEST #a * 100"))
+        await receive([":srv BATCH +b1 chathistory #a"]
+                      + Self.page("b1", "#a", count: 100, prefix: "a", startSecond: 1000)
+                      + [":srv BATCH -b1"])
+        return try #require(await eventually { buffer("#a")?.isLoadingHistory == false } ? buffer("#a") : nil)
+    }
+
+    @Test("Scroll-up uses a timestamp bound when msgid references aren't offered")
+    func beforeUsesTimestamp() async throws {
+        await register()
+        let channel = try await joinWithFullPage()
+        session.loadMoreHistory(for: channel)
+        #expect(await sent("CHATHISTORY BEFORE #a timestamp=\(Self.time(1000)) 100"))
+    }
+
+    @Test("Scroll-up uses msgid where the server takes it")
+    func beforeUsesMsgid() async throws {
+        await register(isupport: "MSGREFTYPES=msgid,timestamp")
+        let channel = try await joinWithFullPage()
+        session.loadMoreHistory(for: channel)
+        #expect(await sent("CHATHISTORY BEFORE #a msgid=a0 100"))
+    }
+
+    @Test("Without msgid references, the original is found by paging back")
+    func seekPagesBack() async throws {
+        await register()
+        let channel = try await joinWithFullPage()
+        session.showOriginal(of: "old5", in: channel)
+        #expect(await sent("CHATHISTORY BEFORE #a timestamp=\(Self.time(1000)) 100"))
+        #expect(await count("CHATHISTORY AROUND #a msgid=old5 30") == 0)
+        // First older page doesn't contain it → another page is requested.
+        await receive([":srv BATCH +p1 chathistory #a"]
+                      + Self.page("p1", "#a", count: 100, prefix: "mid", startSecond: 900)
+                      + [":srv BATCH -p1"])
+        #expect(await sent("CHATHISTORY BEFORE #a timestamp=\(Self.time(900)) 100"))
+        await receive([":srv BATCH +p2 chathistory #a"]
+                      + Self.page("p2", "#a", count: 100, prefix: "old", startSecond: 800)
+                      + [":srv BATCH -p2"])
+        #expect(await eventually { session.jumpRequest != nil })
+        let target = try #require(channel.lines.first { $0.msgid == "old5" })
+        #expect(session.jumpRequest == .init(bufferID: channel.id, lineID: target.id))
+    }
+
+    @Test("A FAIL on scroll-up unblocks the buffer")
+    func failUnblocksHistory() async throws {
+        await register()
+        let channel = try await joinWithFullPage()
+        session.loadMoreHistory(for: channel)
+        #expect(channel.isLoadingHistory)
+        await transport.receive(":srv FAIL CHATHISTORY INVALID_PARAMS BEFORE x :Invalid first bound")
+        #expect(await eventually { channel.isLoadingHistory == false })
     }
 }
