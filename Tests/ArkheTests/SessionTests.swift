@@ -272,4 +272,37 @@ struct SessionTests {
         await transport.receive(":srv FAIL CHATHISTORY INVALID_PARAMS BEFORE x :Invalid first bound")
         #expect(await eventually { channel.isLoadingHistory == false })
     }
+
+    // MARK: - Servers without msgids (soju)
+
+    @Test("Restored lines without msgids still catch up, without duplicating the overlap")
+    func catchUpWithoutMsgids() async throws {
+        let line = ChatLine(timestamp: Date(timeIntervalSince1970: 1_790_000_000), sender: "alice",
+                            text: "old", kind: .message, isHistorical: true)
+        session.restoreHistory(.init(buffers: [
+            .init(name: "#c", kind: .channel, topic: nil, readMarker: nil,
+                  historyExhausted: false, lines: [line]),
+        ]))
+        await register()
+        await transport.receive(":me!u@h JOIN #c")
+        #expect(await sent("CHATHISTORY AFTER #c timestamp=\(Self.time(0)) 100"))
+        await receive([":srv BATCH +c1 chathistory #c",
+                       "@batch=c1;time=\(Self.time(0)) :alice!a@h PRIVMSG #c :old",
+                       "@batch=c1;time=\(Self.time(5)) :bob!b@h PRIVMSG #c :new",
+                       ":srv BATCH -c1"])
+        #expect(await eventually { buffer("#c")?.lines.count == 2 })
+        #expect(buffer("#c")?.lines.map(\.text) == ["old", "new"])
+    }
+
+    @Test("A restored buffer with nothing to anchor on falls back to LATEST")
+    func restoredWithoutAnchorUsesLatest() async {
+        let status = ChatLine(timestamp: Date(), sender: nil, text: "topic set", kind: .event)
+        session.restoreHistory(.init(buffers: [
+            .init(name: "#c", kind: .channel, topic: nil, readMarker: nil,
+                  historyExhausted: false, lines: [status]),
+        ]))
+        await register()
+        await transport.receive(":me!u@h JOIN #c")
+        #expect(await sent("CHATHISTORY LATEST #c * 100"))
+    }
 }

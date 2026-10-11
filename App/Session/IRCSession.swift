@@ -1167,24 +1167,24 @@ final class IRCSession: Identifiable {
         // One request at a time per buffer: overlapping catch-ups compounded into
         // a request flood when something re-triggered this mid-flight.
         guard !buffer.isLoadingHistory else { return }
-        if !buffer.loadedHistory {
-            // First view of this channel: pull the most recent page.
+        guard buffer.loadedHistory, let newest = buffer.newestMessageTimestamp else {
+            // First view of this channel (or nothing to catch up from): pull the
+            // most recent page.
             buffer.loadedHistory = true
             buffer.isLoadingHistory = true
             send(IRCMessage(command: "CHATHISTORY",
                             parameters: ["LATEST", buffer.name, "*", "\(Self.historyPageSize)"]))
-        } else if let newest = buffer.newestMessageTimestamp {
-            // Reconnect (soju re-JOINs us): we already hold this channel's
-            // scrollback but were suspended for a while. soju doesn't auto-replay
-            // backlog to chathistory-capable clients, so pull everything since our
-            // newest message. Overlap / double-delivery is dropped by msgid in
-            // `Buffer.append`.
-            buffer.isLoadingHistory = true
-            catchUpTargets.insert(buffer.name)
-            let selector = "timestamp=\(Self.timeFormatter.string(from: newest))"
-            send(IRCMessage(command: "CHATHISTORY",
-                            parameters: ["AFTER", buffer.name, selector, "\(Self.historyPageSize)"]))
+            return
         }
+        // Reconnect (soju re-JOINs us) or restored scrollback: pull everything
+        // since our newest line. soju doesn't auto-replay backlog to
+        // chathistory-capable clients. Overlap is dropped in `Buffer.append` (by
+        // msgid, or by content where the server sends none).
+        buffer.isLoadingHistory = true
+        catchUpTargets.insert(buffer.name)
+        let selector = "timestamp=\(Self.timeFormatter.string(from: newest))"
+        send(IRCMessage(command: "CHATHISTORY",
+                        parameters: ["AFTER", buffer.name, selector, "\(Self.historyPageSize)"]))
     }
 
     /// After a catch-up page: keep paging forward while pages come back full,

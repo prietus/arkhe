@@ -189,10 +189,15 @@ final class Buffer: Identifiable {
         unreadCount = 0
     }
 
-    /// Timestamp of the newest real (msgid-bearing) message — the boundary a
-    /// reconnect uses to catch up via `CHATHISTORY AFTER`.
+    /// Timestamp of the newest line the server sent — the boundary a reconnect
+    /// uses to catch up via `CHATHISTORY AFTER`. Not just msgid-bearing lines:
+    /// soju sends no msgids at all. Local status lines (no msgid, not a message
+    /// or presence event) are skipped since they carry the device clock.
     var newestMessageTimestamp: Date? {
-        lines.last(where: { $0.msgid != nil })?.timestamp
+        lines.lazy
+            .filter { $0.msgid != nil || $0.kind.countsAsUnread || $0.presence != nil }
+            .map(\.timestamp)
+            .max()
     }
 
     var sortedMembers: [Member] {
@@ -209,6 +214,14 @@ final class Buffer: Identifiable {
         // a live line, and a message may be delivered under more than one batch.
         // Lines without a msgid (local status lines) always append.
         if let mid = line.msgid, !markProcessed(mid) { return }
+        // Without a msgid (soju), a history line identical to one we hold is the
+        // same message replayed by a catch-up overlap or a restored snapshot.
+        if line.msgid == nil, line.isHistorical,
+           lines.contains(where: { $0.msgid == nil && $0.timestamp == line.timestamp
+                                   && $0.kind == line.kind && $0.sender == line.sender
+                                   && $0.text == line.text }) {
+            return
+        }
         // History lines slot into timestamp order; live lines append. A history
         // page (LATEST/BEFORE) arrives oldest-first, so we insert before the
         // first strictly-newer line — this keeps each page a contiguous, ordered
