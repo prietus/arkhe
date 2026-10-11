@@ -48,4 +48,27 @@ struct ISupportTests {
         // A malformed multi-character value is ignored.
         #expect(isupport("BOT=XY").botMode == nil)
     }
+
+    @Test("FILEHOST: draft name wins, soju vendor name as fallback")
+    func fileHostNames() {
+        #expect(isupport("soju.im/FILEHOST=https://bnc.example/uploads")
+            .fileHost(allowInsecure: false)?.absoluteString == "https://bnc.example/uploads")
+        #expect(isupport("soju.im/FILEHOST=https://a.example/x draft/FILEHOST=https://b.example/y")
+            .fileHost(allowInsecure: false)?.host == "b.example")
+        #expect(isupport("NETWORK=Example").fileHost(allowInsecure: true) == nil)
+    }
+
+    @Test("FILEHOST: plain http only over a plaintext IRC link")
+    func fileHostScheme() {
+        let s = isupport("soju.im/FILEHOST=http://192.168.1.34:8080/uploads")
+        #expect(s.fileHost(allowInsecure: false) == nil)
+        #expect(s.fileHost(allowInsecure: true)?.port == 8080)
+        #expect(isupport("draft/FILEHOST=ftp://x.example/").fileHost(allowInsecure: true) == nil)
+    }
+
+    @Test("FILEHOST: \\xHH escapes are decoded")
+    func fileHostEscapes() {
+        let s = isupport("draft/FILEHOST=https://x.example/up?a\\x3Db")
+        #expect(s.fileHost(allowInsecure: false)?.query == "a=b")
+    }
 }

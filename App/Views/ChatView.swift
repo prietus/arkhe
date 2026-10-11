@@ -41,6 +41,7 @@ struct ChatView: View {
                        showsAttach: buffer.kind != .status,
                        nicks: buffer.kind == .channel ? buffer.sortedMembers.map(\.nick) : [],
                        ownNick: session.currentNick,
+                       fileHost: session.fileHost,
                        onSend: send)
                 .onChange(of: draft) { _, newValue in
                     guard buffer.kind != .status else { return }

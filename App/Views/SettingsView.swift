@@ -104,6 +104,7 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Toggle("Use server's file host", isOn: $uploader.preferServerHost)
                     Toggle("Custom uploader", isOn: $uploader.enabled)
                     if uploader.enabled {
                         TextField("Upload URL", text: $uploader.uploadURL)
@@ -128,7 +129,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Upload")
                 } footer: {
-                    Text("The attach button (📎) uploads a photo or file here and inserts the returned URL into your message. For inline image previews, use the response key that returns the direct/raw file URL. The token is stored in the Keychain.")
+                    Text("The attach button (📎) uploads a photo or file and inserts the returned URL into your message. When the server or bouncer offers its own file host (e.g. soju), it's used with your SASL login; otherwise the custom uploader is. For inline image previews, use the response key that returns the direct/raw file URL. The token is stored in the Keychain.")
                 }
             }
             .navigationTitle("Settings")

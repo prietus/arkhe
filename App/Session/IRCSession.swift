@@ -75,6 +75,20 @@ final class IRCSession: Identifiable {
     var networkAllowsReplies: Bool { isupport.allowsClientTag("draft/reply") }
     private var didWarnClientTagDeny = false
 
+    /// The server's own upload endpoint (`draft/FILEHOST` / `soju.im/FILEHOST`),
+    /// with the HTTP Basic credentials the spec asks for under SASL PLAIN. Plain
+    /// http is only accepted when the IRC link itself isn't TLS.
+    var fileHost: FileHostTarget? {
+        guard status == .connected,
+              let url = isupport.fileHost(allowInsecure: !config.useTLS) else { return nil }
+        var target = FileHostTarget(url: url)
+        if config.saslMode == .plain, let password = config.saslPassword {
+            target.basicUser = config.saslAccount
+            target.basicPassword = password
+        }
+        return target
+    }
+
     private let connection = IRCConnection()
     private var negotiator: CapabilityNegotiator
     private var didCaptureCaps = false

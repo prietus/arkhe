@@ -26,6 +26,9 @@ final class UploaderSettings {
     }
 
     var enabled: Bool            { didSet { d.set(enabled, forKey: K.enabled) } }
+    /// Use the IRC server's file host (IRCv3 `filehost`, e.g. soju) when it
+    /// advertises one, ahead of the custom uploader.
+    var preferServerHost: Bool   { didSet { d.set(preferServerHost, forKey: K.preferServer) } }
     var uploadURL: String        { didSet { d.set(uploadURL, forKey: K.url) } }
     var multipartField: String   { didSet { d.set(multipartField, forKey: K.field) } }
     var responseType: ResponseType { didSet { d.set(responseType.rawValue, forKey: K.response) } }
@@ -39,6 +42,7 @@ final class UploaderSettings {
 
     private enum K {
         static let enabled  = "upload.enabled"
+        static let preferServer = "upload.preferServerHost"
         static let url      = "upload.url"
         static let field    = "upload.field"
         static let response = "upload.response"
@@ -48,6 +52,7 @@ final class UploaderSettings {
 
     init() {
         enabled = d.bool(forKey: K.enabled)
+        preferServerHost = d.object(forKey: K.preferServer) as? Bool ?? true
         uploadURL = d.string(forKey: K.url) ?? ""
         multipartField = d.string(forKey: K.field) ?? "file"
         responseType = ResponseType(rawValue: d.string(forKey: K.response) ?? "") ?? .json

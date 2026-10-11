@@ -120,4 +120,35 @@ public struct ISupport: Sendable {
         }
         return !denied
     }
+
+    /// The server's recommended upload endpoint (IRCv3 `filehost`, still a work
+    /// in progress): `draft/FILEHOST`, or soju's vendor `soju.im/FILEHOST`.
+    /// Only `https` is returned, plus `http` when `allowInsecure` (the IRC link
+    /// itself is plaintext) — the spec forbids downgrading a TLS connection.
+    public func fileHost(allowInsecure: Bool) -> URL? {
+        guard let raw = tokens["draft/FILEHOST"] ?? tokens["soju.im/FILEHOST"],
+              let url = URL(string: Self.unescapeValue(raw)),
+              let scheme = url.scheme?.lowercased() else { return nil }
+        if scheme == "https" || (scheme == "http" && allowInsecure) { return url }
+        return nil
+    }
+
+    /// Decodes the `\xHH` escapes ISUPPORT values use for bytes like space and `=`.
+    static func unescapeValue(_ value: String) -> String {
+        guard value.contains("\\x") else { return value }
+        var bytes: [UInt8] = []
+        let utf8 = Array(value.utf8)
+        var i = 0
+        while i < utf8.count {
+            if utf8[i] == UInt8(ascii: "\\"), i + 3 < utf8.count, utf8[i + 1] == UInt8(ascii: "x"),
+               let byte = UInt8(String(decoding: utf8[(i + 2)...(i + 3)], as: UTF8.self), radix: 16) {
+                bytes.append(byte)
+                i += 4
+            } else {
+                bytes.append(utf8[i])
+                i += 1
+            }
+        }
+        return String(decoding: bytes, as: UTF8.self)
+    }
 }

@@ -3,7 +3,7 @@ import PhotosUI
 import UniformTypeIdentifiers
 
 /// The message input row. Supports multi-line growth, a send button and — when
-/// a custom uploader is configured — an attach button that uploads a photo or
+/// the server has a file host or a custom uploader is configured — an attach button that uploads a photo or
 /// file and inserts the returned URL into the draft.
 struct ComposeBar: View {
     @Binding var text: String
@@ -14,6 +14,8 @@ struct ComposeBar: View {
     var nicks: [String] = []
     /// Our own nick, excluded from completion suggestions.
     var ownNick: String? = nil
+    /// The server's own file host, when it advertises one.
+    var fileHost: FileHostTarget? = nil
     let onSend: () -> Void
 
     @Environment(UploaderSettings.self) private var uploader
@@ -148,8 +150,8 @@ struct ComposeBar: View {
 
     private var attachButton: some View {
         Button {
-            if uploader.config == nil {
-                errorMessage = "Set up a custom uploader in Settings → Upload first."
+            if uploadTarget == nil {
+                errorMessage = Self.noUploaderMessage
             } else {
                 showSourceDialog = true
             }
@@ -189,8 +191,8 @@ struct ComposeBar: View {
 
     /// Handles a file/image dragged onto the compose bar (iPad drag-and-drop).
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard uploader.config != nil else {
-            errorMessage = "Set up a custom uploader in Settings → Upload first."
+        guard uploadTarget != nil else {
+            errorMessage = Self.noUploaderMessage
             return false
         }
         guard let provider = providers.first else { return false }
@@ -222,16 +224,39 @@ struct ComposeBar: View {
         Task { await upload(data: data, filename: url.lastPathComponent, mime: mime) }
     }
 
+    private enum UploadTarget {
+        case server(FileHostTarget)
+        case custom(UploaderSettings.Config)
+    }
+
+    private static let noUploaderMessage =
+        "This server has no file host. Set up a custom uploader in Settings → Upload."
+
+    /// The server's file host when it has one (and the user prefers it, or has no
+    /// custom uploader); otherwise the custom uploader.
+    private var uploadTarget: UploadTarget? {
+        let custom = uploader.config
+        if let fileHost, uploader.preferServerHost || custom == nil { return .server(fileHost) }
+        return custom.map { .custom($0) }
+    }
+
     private func upload(data: Data, filename: String, mime: String) async {
-        guard let config = uploader.config else {
-            errorMessage = "Set up a custom uploader in Settings → Upload first."
+        guard let target = uploadTarget else {
+            errorMessage = Self.noUploaderMessage
             return
         }
         uploading = true
         defer { uploading = false }
         do {
-            let link = try await FileUploader.upload(data: data, filename: filename,
+            let link: String
+            switch target {
+            case let .server(host):
+                link = try await FileUploader.upload(data: data, filename: filename,
+                                                     mimeType: mime, fileHost: host)
+            case let .custom(config):
+                link = try await FileUploader.upload(data: data, filename: filename,
                                                      mimeType: mime, config: config)
+            }
             if !text.isEmpty && !text.hasSuffix(" ") { text += " " }
             text += link
             focused = true
