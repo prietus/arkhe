@@ -43,6 +43,21 @@ APNs notification the on-device extension can decrypt:
 `mutable-content` runs the Notification Service Extension, which base64-decodes
 `b`, decrypts it (RFC 8291) and replaces the alert with the real sender/text.
 
+### Android (Firebase Cloud Messaging)
+
+Arkhe for Android registers `https://push.arkhe.priet.us/v1/fcm/<fcm-token>`.
+The relay forwards the body to FCM (HTTP v1) as a **data-only** message — so the
+app always handles it itself, decrypts it on-device and shows the notification:
+
+```json
+{ "message": { "token": "<fcm-token>",
+  "data": { "ce": "aes128gcm", "b": "<base64 of the raw encrypted Web Push body>" },
+  "android": { "priority": "HIGH", "ttl": "<TTL>s" } } }
+```
+
+`Urgency: low|very-low` maps to `NORMAL` priority; FCM `UNREGISTERED` maps to
+`410 Gone` so soju drops the subscription, like APNs `Unregistered`.
+
 ## Build
 
 ```sh
@@ -55,12 +70,16 @@ go test ./...
 
 | Variable | Required | Default | Notes |
 |---|---|---|---|
-| `APNS_KEY_PATH` | yes | — | path to the `.p8` APNs auth key |
-| `APNS_KEY_ID` | yes | — | `9HG9U4DQ2G` |
-| `APNS_TEAM_ID` | yes | — | `LFTD9T269J` |
+| `APNS_KEY_PATH` | for iOS | — | path to the `.p8` APNs auth key |
+| `APNS_KEY_ID` | for iOS | — | `9HG9U4DQ2G` |
+| `APNS_TEAM_ID` | for iOS | — | `LFTD9T269J` |
+| `FCM_CREDENTIALS_PATH` | for Android | — | Firebase service-account JSON key (Project settings → Service accounts → Generate new private key) |
 | `APNS_TOPIC` | no | `im.arkhe.client` | the app bundle id |
 | `APNS_ENV` | no | `production` | `production` \| `sandbox` \| `auto` |
 | `LISTEN_ADDR` | no | `127.0.0.1:8080` | behind nginx |
+
+At least one platform must be configured; a platform left unconfigured answers
+`404` on its route.
 
 Use `APNS_ENV=auto` while you have both TestFlight (sandbox) and App Store
 (production) builds in the wild — it tries production, then sandbox on
@@ -85,7 +104,9 @@ Use `APNS_ENV=auto` while you have both TestFlight (sandbox) and App Store
    sudo useradd --system --no-create-home --shell /usr/sbin/nologin arkhe-push
    sudo mkdir -p /etc/arkhe-push
    sudo cp AuthKey_9HG9U4DQ2G.p8 /etc/arkhe-push/
+   sudo cp firebase-service-account.json /etc/arkhe-push/fcm.json   # Android
    sudo tee /etc/arkhe-push/env >/dev/null <<'EOF'
+   FCM_CREDENTIALS_PATH=/etc/arkhe-push/fcm.json
    APNS_KEY_PATH=/etc/arkhe-push/AuthKey_9HG9U4DQ2G.p8
    APNS_KEY_ID=9HG9U4DQ2G
    APNS_TEAM_ID=LFTD9T269J
@@ -94,7 +115,7 @@ Use `APNS_ENV=auto` while you have both TestFlight (sandbox) and App Store
    LISTEN_ADDR=127.0.0.1:8080
    EOF
    sudo chown -R arkhe-push:arkhe-push /etc/arkhe-push
-   sudo chmod 600 /etc/arkhe-push/AuthKey_9HG9U4DQ2G.p8 /etc/arkhe-push/env
+   sudo chmod 600 /etc/arkhe-push/AuthKey_9HG9U4DQ2G.p8 /etc/arkhe-push/fcm.json /etc/arkhe-push/env
    ```
 
 4. **systemd**
@@ -124,7 +145,8 @@ Use `APNS_ENV=auto` while you have both TestFlight (sandbox) and App Store
 - No IRC credentials, no plaintext, no database of conversations.
 - Access logging is **off** (nginx) so device tokens and soju IPs are not
   persisted; only errors are kept.
-- The relay holds exactly one secret: the APNs `.p8` (root-only, `chmod 600`).
+- The relay holds two secrets: the APNs `.p8` and the Firebase service-account
+  key (both `chmod 600`).
 
 ## Security notes
 
