@@ -581,6 +581,17 @@ final class IRCSession: Identifiable {
             return
         }
 
+        // A history page's size counts every event it replays (joins, parts,
+        // TAGMSGs… under event-playback), not just PRIVMSGs: a busy channel's
+        // 100-event page holds only a few messages, and counting those alone
+        // made a full page look short — wrongly ending history on servers
+        // without `draft/chathistory-end` (soju). PRIVMSG/NOTICE count
+        // themselves (multiline parts once, on batch close).
+        if let ref = message.tags["batch"], openBatches[ref]?.isHistory == true,
+           !["PRIVMSG", "NOTICE", "BATCH"].contains(message.command) {
+            openBatches[ref]?.messageCount += 1
+        }
+
         switch message.command {
         case "PING":
             send(.pong(message.trailing ?? ""))
@@ -742,9 +753,12 @@ final class IRCSession: Identifiable {
         case .nicknameInUse:
             handleNickInUse()
         default:
-            // Surface other numerics in the status window for visibility.
+            // Surface other numerics in the status window for visibility —
+            // as errors, except the 900-range SASL confirmations.
             if numeric.rawValue >= 400 {
-                addStatus(message.parameters.dropFirst().joined(separator: " "), kind: .error)
+                let informational = [.loggedIn, .loggedOut, .saslSuccess].contains(numeric)
+                addStatus(message.parameters.dropFirst().joined(separator: " "),
+                          kind: informational ? .event : .error)
             }
         }
     }
@@ -764,6 +778,13 @@ final class IRCSession: Identifiable {
         let kind: Buffer.Kind = isupport.isChannel(target) ? .channel : .query
         guard let buffer = buffer(named: bufferName, kind: kind, createIfMissing: true) else { return }
 
+        // Counted before the CTCP filter below: an ignored CTCP still takes a
+        // slot in the server's history page.
+        let info = batchInfo(for: message)
+        if let ref = message.tags["batch"], info?.isHistory == true {
+            openBatches[ref]?.messageCount += 1
+        }
+
         var lineKind: ChatLine.Kind = isNotice ? .notice : .message
         var body = text
         if text.hasPrefix("\u{01}ACTION "), text.hasSuffix("\u{01}") {
@@ -771,11 +792,6 @@ final class IRCSession: Identifiable {
             lineKind = .action
         } else if text.hasPrefix("\u{01}") {
             return // ignore other CTCP for now
-        }
-
-        let info = batchInfo(for: message)
-        if let ref = message.tags["batch"], info?.isHistory == true {
-            openBatches[ref]?.messageCount += 1
         }
         let line = ChatLine(
             timestamp: timestamp(from: message),

@@ -305,4 +305,52 @@ struct SessionTests {
         await transport.receive(":me!u@h JOIN #c")
         #expect(await sent("CHATHISTORY LATEST #c * 100"))
     }
+
+    // MARK: - History page size
+
+    @Test("A full page of mostly replayed events doesn't end history")
+    func eventsCountTowardPageSize() async {
+        await register()
+        await transport.receive(":me!u@h JOIN #a")
+        #expect(await sent("CHATHISTORY LATEST #a * 100"))
+        // event-playback: 10 messages and 90 joins make a full 100-item page.
+        let joins = (0..<90).map {
+            "@batch=b1;time=\(Self.time(100 + $0)) :user\($0)!u@h JOIN #a"
+        }
+        await receive([":srv BATCH +b1 chathistory #a"] + Self.page("b1", "#a", count: 10, prefix: "a")
+                      + joins + [":srv BATCH -b1"])
+        #expect(await eventually { buffer("#a")?.isLoadingHistory == false })
+        #expect(buffer("#a")?.historyExhausted == false)
+    }
+
+    @Test("Ignored CTCPs still count toward the page size")
+    func ctcpCountsTowardPageSize() async {
+        await register()
+        await transport.receive(":me!u@h JOIN #a")
+        #expect(await sent("CHATHISTORY LATEST #a * 100"))
+        let ctcps = (0..<5).map {
+            "@batch=b1;time=\(Self.time(200 + $0)) :bob!b@h PRIVMSG #a :\u{01}VERSION\u{01}"
+        }
+        await receive([":srv BATCH +b1 chathistory #a"] + Self.page("b1", "#a", count: 95, prefix: "a")
+                      + ctcps + [":srv BATCH -b1"])
+        #expect(await eventually { buffer("#a")?.isLoadingHistory == false })
+        #expect(buffer("#a")?.lines.count == 95)
+        #expect(buffer("#a")?.historyExhausted == false)
+    }
+
+    // MARK: - Status window
+
+    @Test("SASL confirmations (900/903) aren't shown as errors; failures still are")
+    func saslNumericsAreInformational() async {
+        await register()
+        await transport.receive(":srv 900 me me!u@h me :You are now logged in as me",
+                                ":srv 903 me :SASL authentication successful",
+                                ":srv 904 me :SASL authentication failed")
+        let status = session.statusBuffer
+        #expect(await eventually { status.lines.contains { $0.text.contains("failed") } })
+        let kind = { (needle: String) in status.lines.first { $0.text.contains(needle) }?.kind }
+        #expect(kind("logged in") == .event)
+        #expect(kind("successful") == .event)
+        #expect(kind("failed") == .error)
+    }
 }
