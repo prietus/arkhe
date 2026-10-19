@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import IRCCore
 
 /// The conversation pane: scrollback, topic, member list (channels) and the
 /// compose bar.
@@ -90,7 +91,7 @@ struct ChatView: View {
         }
         .sheet(isPresented: $showingMembers) {
             NavigationStack {
-                MemberListView(buffer: buffer) { nick in
+                MemberListView(buffer: buffer, session: session) { nick in
                     showingMembers = false
                     let query = session.openQuery(nick)
                     store.select(query, in: session)
@@ -253,15 +254,18 @@ struct ChatView: View {
     /// The lines actually shown, after applying the presence-visibility filter
     /// and (optionally) collapsing runs of consecutive presence events.
     private var displayLines: [ChatLine] {
+        // Ignored senders' lines stay in the buffer (un-ignoring shows them
+        // again) but are never displayed.
+        let visible = session.ignores.isEmpty ? buffer.lines : buffer.lines.filter { !session.isIgnored($0) }
         let filtered: [ChatLine]
         switch prefs.presenceVisibility {
         case .show:
-            filtered = buffer.lines
+            filtered = visible
         case .hide:
-            filtered = buffer.lines.filter { $0.presence == nil }
+            filtered = visible.filter { $0.presence == nil }
         case .smart:
             let speech = speechTimes()
-            filtered = buffer.lines.filter { line in
+            filtered = visible.filter { line in
                 guard line.presence != nil, let nick = line.presenceNick else { return true }
                 let times = speech[nick.lowercased()] ?? []
                 return times.contains { abs($0.timeIntervalSince(line.timestamp)) <= Preferences.activeWindow }
@@ -364,6 +368,13 @@ struct ChatView: View {
                 UIPasteboard.general.string = line.text
             } label: {
                 Label("Copy", systemImage: "doc.on.doc")
+            }
+            if !line.isSelf, let nick = line.sender, let mask = IgnoreMask(parsing: nick) {
+                Button(role: .destructive) {
+                    session.ignore(mask)
+                } label: {
+                    Label("Ignore \(nick)", systemImage: "eye.slash")
+                }
             }
             if line.isSelf, line.msgid != nil, !line.redacted, session.networkAllowsRedaction {
                 Button(role: .destructive) {

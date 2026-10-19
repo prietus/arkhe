@@ -167,6 +167,9 @@ final class IRCSession: Identifiable {
     }
     private(set) var jumpRequest: JumpRequest?
 
+    /// Client-side ignores (`/ignore`) for this server, persisted per config.
+    private(set) var ignores: [IgnoreMask] = []
+
     /// Whether CHATHISTORY takes `msgid=` references here (`MSGREFTYPES`).
     /// soju only takes timestamps and FAILs a msgid bound.
     private var acceptsMsgidReferences: Bool {
@@ -189,6 +192,7 @@ final class IRCSession: Identifiable {
         self.config = config
         self.currentNick = config.nickname
         self.negotiator = CapabilityNegotiator(desired: config.desiredCaps, mechanism: config.saslMechanism)
+        self.ignores = IgnoreStore.load(config.id)
         let status = Buffer(name: config.name.isEmpty ? config.host : config.name, kind: .status)
         self.statusBuffer = status
         self.buffers = [status]
@@ -441,6 +445,23 @@ final class IRCSession: Identifiable {
         case "quit":
             disconnect(message: rest.isEmpty ? "Arkhe" : rest)
 
+        case "ignore":
+            guard !rest.isEmpty else {
+                note(ignores.isEmpty ? "Nobody is ignored on this server."
+                     : "Ignored: " + ignores.map(\.pattern).joined(separator: ", "), in: buffer)
+                return
+            }
+            guard let mask = IgnoreMask(parsing: rest) else {
+                addStatus("Usage: /ignore <nick | nick!user@host | $a:account>", kind: .error); return
+            }
+            note(ignore(mask) ? "Ignoring \(mask)." : "Already ignoring \(mask).", in: buffer)
+
+        case "unignore":
+            guard let mask = IgnoreMask(parsing: rest) else {
+                addStatus("Usage: /unignore <nick | mask>", kind: .error); return
+            }
+            note(unignore(mask) ? "No longer ignoring \(mask)." : "\(mask) isn't ignored.", in: buffer)
+
         case "raw", "quote":
             if let message = IRCMessage(parsing: rest) { send(message) }
             else { addStatus("Couldn't parse raw line.", kind: .error) }
@@ -448,6 +469,65 @@ final class IRCSession: Identifiable {
         default:
             addStatus("Unknown command: /\(cmd)", kind: .error)
         }
+    }
+
+    // MARK: - Ignore
+
+    /// Adds a rule. Returns false if it was already there.
+    @discardableResult
+    func ignore(_ mask: IgnoreMask) -> Bool {
+        guard ignoreIndex(of: mask) == nil else { return false }
+        ignores.append(mask)
+        ignoresChanged()
+        return true
+    }
+
+    /// Removes a rule. Returns false if there was no such rule.
+    @discardableResult
+    func unignore(_ mask: IgnoreMask) -> Bool {
+        guard let index = ignoreIndex(of: mask) else { return false }
+        ignores.remove(at: index)
+        ignoresChanged()
+        return true
+    }
+
+    /// The rule equal to `mask` under the network's casemapping, since IRC
+    /// nicks and hosts are case-insensitive (`/unignore pepe` removes `Pepe`).
+    private func ignoreIndex(of mask: IgnoreMask) -> Int? {
+        let folded = isupport.caseMapping.fold(mask.pattern)
+        return ignores.firstIndex { isupport.caseMapping.fold($0.pattern) == folded }
+    }
+
+    func isIgnored(nick: String, user: String?, host: String?, account: String?) -> Bool {
+        !ignores.isEmpty && ignores.contains {
+            $0.matches(nick: nick, user: user, host: host, account: account,
+                       caseMapping: isupport.caseMapping)
+        }
+    }
+
+    /// Whether a stored line comes from an ignored sender (presence events by
+    /// the nick they concern). Our own lines never are.
+    func isIgnored(_ line: ChatLine) -> Bool {
+        guard !ignores.isEmpty, !line.isSelf, let nick = line.sender ?? line.presenceNick else { return false }
+        return isIgnored(nick: nick, user: line.sourceUser, host: line.sourceHost, account: line.account)
+    }
+
+    /// The exact-nick rule for `nick`, if one exists — what "Unignore" removes.
+    func plainIgnore(for nick: String) -> IgnoreMask? {
+        ignores.first { $0.plainNick.map { isupport.equalIdentifiers($0, nick) } ?? false }
+    }
+
+    private func ignoresChanged() {
+        IgnoreStore.save(ignores, for: config.id)
+        for buffer in buffers {
+            buffer.typing = buffer.typing.filter { !isIgnored(nick: $0.key, user: nil, host: nil, account: nil) }
+            buffer.recomputeUnread()
+        }
+    }
+
+    /// Feedback for a command, shown where it was typed.
+    private func note(_ text: String, in buffer: Buffer) {
+        buffer.append(ChatLine(timestamp: Date(), sender: nil, text: text, kind: .event), markUnread: false)
     }
 
     func join(_ channel: String) {
@@ -774,9 +854,13 @@ final class IRCSession: Identifiable {
         }
         let sender = message.source?.nick ?? "*"
         let isSelf = isupport.equalIdentifiers(sender, currentNick)
+        let ignored = !isSelf && isIgnored(nick: sender, user: message.source?.user,
+                                          host: message.source?.host, account: message.tags["account"])
         let bufferName = isupport.isChannel(target) ? target : (isSelf ? target : sender)
         let kind: Buffer.Kind = isupport.isChannel(target) ? .channel : .query
-        guard let buffer = buffer(named: bufferName, kind: kind, createIfMissing: true) else { return }
+        // An ignored sender never opens a new private conversation.
+        guard let buffer = buffer(named: bufferName, kind: kind,
+                                  createIfMissing: !(ignored && kind == .query)) else { return }
 
         // Counted before the CTCP filter below: an ignored CTCP still takes a
         // slot in the server's history page.
@@ -802,16 +886,20 @@ final class IRCSession: Identifiable {
             account: message.tags["account"],
             msgid: message.tags["msgid"],
             replyTo: replyRef(message.tags),
-            isHistorical: info?.isHistory ?? false
+            isHistorical: info?.isHistory ?? false,
+            sourceUser: message.source?.user,
+            sourceHost: message.source?.host
         )
         if info?.isAroundContext == true {
             aroundContext?.lines.append(line)
             return
         }
-        let mentionsMe = isHighlight(body)
-        buffer.append(line, markUnread: !isSelf)
+        // Ignored lines are kept but hidden by the view: no unread, highlight or
+        // notification, so un-ignoring simply shows them again.
+        let mentionsMe = !ignored && isHighlight(body)
+        buffer.append(line, markUnread: !isSelf && !ignored)
         if mentionsMe && !isSelf && !line.isHistorical { buffer.hasMention = true }
-        if !isSelf, !isNotice, !line.isHistorical {
+        if !isSelf, !ignored, !isNotice, !line.isHistorical {
             if buffer.kind == .query {
                 emitNotification(.directMessage, buffer: buffer, sender: sender, text: body, msgid: line.msgid)
             } else if mentionsMe {
@@ -1087,9 +1175,12 @@ final class IRCSession: Identifiable {
         guard let target = info.target, let source = info.multilineSource else { return }
         let sender = source.nick
         let isSelf = isupport.equalIdentifiers(sender, currentNick)
+        let ignored = !isSelf && isIgnored(nick: sender, user: source.user, host: source.host,
+                                          account: info.multilineTags["account"])
         let bufferName = isupport.isChannel(target) ? target : (isSelf ? target : sender)
         let kind: Buffer.Kind = isupport.isChannel(target) ? .channel : .query
-        guard let buffer = buffer(named: bufferName, kind: kind, createIfMissing: true) else { return }
+        guard let buffer = buffer(named: bufferName, kind: kind,
+                                  createIfMissing: !(ignored && kind == .query)) else { return }
 
         // The batch may itself sit inside a chathistory batch; if so it counts
         // as one history message and the line is historical.
@@ -1111,15 +1202,16 @@ final class IRCSession: Identifiable {
         let line = ChatLine(
             timestamp: ts, sender: sender, text: text, kind: lineKind, isSelf: isSelf,
             account: info.multilineTags["account"], msgid: info.multilineTags["msgid"],
-            replyTo: replyRef(info.multilineTags), isHistorical: historical)
+            replyTo: replyRef(info.multilineTags), isHistorical: historical,
+            sourceUser: source.user, sourceHost: source.host)
         if info.parentRef.flatMap({ openBatches[$0]?.isAroundContext }) == true {
             aroundContext?.lines.append(line)
             return
         }
-        let mentionsMe = isHighlight(text)
-        buffer.append(line, markUnread: !isSelf)
+        let mentionsMe = !ignored && isHighlight(text)
+        buffer.append(line, markUnread: !isSelf && !ignored)
         if mentionsMe && !isSelf && !historical { buffer.hasMention = true }
-        if !isSelf, !historical {
+        if !isSelf, !ignored, !historical {
             if buffer.kind == .query {
                 emitNotification(.directMessage, buffer: buffer, sender: sender, text: text, msgid: line.msgid)
             } else if mentionsMe {
@@ -1407,6 +1499,9 @@ final class IRCSession: Identifiable {
         // re-apply its state change — a replayed react would resurrect a reaction
         // the user has since removed. Keyed on the TAGMSG's own msgid.
         if let mid = message.tags["msgid"], !buffer.markProcessed(mid) { return }
+        // Reactions and typing from ignored senders are dropped outright.
+        if !isSelf, isIgnored(nick: sender, user: source.user, host: source.host,
+                              account: message.tags["account"]) { return }
 
         if let emoji = message.tags["+draft/react"], let msgid = replyRef(message.tags) {
             buffer.addReaction(emoji, toMsgID: msgid, from: sender)
@@ -1483,6 +1578,7 @@ final class IRCSession: Identifiable {
         if let existing = bufferIndex[key] { return existing }
         guard createIfMissing else { return nil }
         let buffer = Buffer(name: name, kind: kind)
+        buffer.isHidden = { [weak self] in self?.isIgnored($0) ?? false }
         bufferIndex[key] = buffer
         buffers.append(buffer)
         return buffer

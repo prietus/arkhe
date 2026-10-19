@@ -1,8 +1,11 @@
 import SwiftUI
+import IRCCore
 
 /// The channel member roster, grouped implicitly by membership prefix order.
 struct MemberListView: View {
     let buffer: Buffer
+    /// For ignoring / un-ignoring members from their row's menu.
+    let session: IRCSession
     let onSelect: (String) -> Void
 
     var body: some View {
@@ -40,12 +43,39 @@ struct MemberListView: View {
                             .background(.tint.opacity(0.18), in: Capsule())
                             .foregroundStyle(.tint)
                     }
+                    if session.isIgnored(nick: member.nick, user: nil, host: nil, account: member.account) {
+                        Image(systemName: "eye.slash")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Ignored")
+                    }
                     Spacer()
                     if let account = member.account, !account.isEmpty {
                         Image(systemName: "checkmark.seal.fill")
                             .foregroundStyle(.green)
                             .font(.caption)
                     }
+                }
+            }
+            .contextMenu { ignoreMenu(member) }
+        }
+    }
+
+    /// Ignore by nick, or by account when the member is logged in (follows
+    /// them across nick changes); un-ignore removes the exact-nick rule.
+    @ViewBuilder private func ignoreMenu(_ member: Member) -> some View {
+        if let rule = session.plainIgnore(for: member.nick) {
+            Button { session.unignore(rule) } label: {
+                Label("Unignore \(member.nick)", systemImage: "eye")
+            }
+        } else if let mask = IgnoreMask(parsing: member.nick) {
+            Button(role: .destructive) { session.ignore(mask) } label: {
+                Label("Ignore \(member.nick)", systemImage: "eye.slash")
+            }
+            if let account = member.account, !account.isEmpty,
+               let byAccount = IgnoreMask(parsing: "$a:\(account)") {
+                Button(role: .destructive) { session.ignore(byAccount) } label: {
+                    Label("Ignore account \(account)", systemImage: "person.crop.circle.badge.xmark")
                 }
             }
         }

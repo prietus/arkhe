@@ -118,6 +118,7 @@ final class ClientStore {
         sessions[id]?.disconnect()
         sessions[id] = nil
         HistoryStore.delete(id)
+        IgnoreStore.delete(id)
         if selectedSessionID == id {
             selectedSessionID = nil
             selectedBufferID = nil

@@ -353,4 +353,99 @@ struct SessionTests {
         #expect(kind("successful") == .event)
         #expect(kind("failed") == .error)
     }
+
+    // MARK: - /ignore
+
+    /// Registers, joins #a and lands an empty history page so live lines flow.
+    func joinA() async throws -> Buffer {
+        await register()
+        await transport.receive(":me!u@h JOIN #a")
+        #expect(await sent("CHATHISTORY LATEST #a * 100"))
+        await receive([":srv BATCH +b1 chathistory #a", ":srv BATCH -b1"])
+        return try #require(await eventually { buffer("#a")?.isLoadingHistory == false } ? buffer("#a") : nil)
+    }
+
+    func run(_ command: String, in buffer: Buffer) {
+        session.sendText(command, to: buffer)
+    }
+
+    @Test("Ignored lines are kept but hidden, with no unread or notification; unignore restores them")
+    func ignoreHidesAndRestores() async throws {
+        defer { IgnoreStore.delete(session.config.id) }
+        var notified = 0
+        session.onNotifiableEvent = { _ in notified += 1 }
+        let channel = try await joinA()
+        run("/ignore Pepe", in: channel)
+        #expect(session.ignores.map(\.pattern) == ["Pepe!*@*"])
+        #expect(channel.lines.last?.text == "Ignoring Pepe!*@*.")
+
+        await transport.receive(":pepe!p@host PRIVMSG #a :me: hello",
+                                ":ana!a@host PRIVMSG #a :hi")
+        #expect(await eventually { channel.lines.contains { $0.text == "hi" } })
+        let pepe = try #require(channel.lines.first { $0.sender == "pepe" })
+        #expect(session.isIgnored(pepe))
+        #expect(channel.unreadCount == 1)      // only ana's line
+        #expect(channel.hasMention == false)   // pepe's highlight didn't count
+        #expect(notified == 0)
+
+        run("/unignore pepe", in: channel)
+        #expect(session.ignores.isEmpty)
+        #expect(!session.isIgnored(pepe))
+        #expect(channel.lines.last?.text == "No longer ignoring pepe!*@*.")
+    }
+
+    @Test("An ignored nick can't open a new private conversation")
+    func ignoredDMDoesNotOpenQuery() async throws {
+        defer { IgnoreStore.delete(session.config.id) }
+        var notified = 0
+        session.onNotifiableEvent = { _ in notified += 1 }
+        let channel = try await joinA()
+        run("/ignore spammer", in: channel)
+        await transport.receive(":spammer!s@h PRIVMSG me :buy now",
+                                ":friend!f@h PRIVMSG me :hey")
+        #expect(await eventually { buffer("friend") != nil })
+        #expect(buffer("spammer") == nil)
+        #expect(notified == 1)
+    }
+
+    @Test("Hostmask and account rules match by host and by account")
+    func ignoreByHostAndAccount() async throws {
+        defer { IgnoreStore.delete(session.config.id) }
+        let channel = try await joinA()
+        run("/ignore *!*@bad.example", in: channel)
+        run("/ignore $a:troll", in: channel)
+        await transport.receive(":x!u@bad.example PRIVMSG #a :one",
+                                "@account=troll :newnick!u@else PRIVMSG #a :two",
+                                ":ok!u@good.example PRIVMSG #a :three")
+        #expect(await eventually { channel.lines.contains { $0.text == "three" } })
+        let ignored = channel.lines.filter { session.isIgnored($0) }.map(\.text)
+        #expect(ignored == ["one", "two"])
+    }
+
+    @Test("Typing from an ignored nick is dropped")
+    func ignoredTyping() async throws {
+        defer { IgnoreStore.delete(session.config.id) }
+        let channel = try await joinA()
+        run("/ignore pepe", in: channel)
+        await transport.receive("@+typing=active :pepe!p@h TAGMSG #a",
+                                "@+typing=active :ana!a@h TAGMSG #a")
+        #expect(await eventually { channel.typing["ana"] != nil })
+        #expect(channel.typing["pepe"] == nil)
+    }
+
+    @Test("Ignores persist per server and bad masks are rejected")
+    func ignorePersistence() async throws {
+        defer { IgnoreStore.delete(session.config.id) }
+        let channel = try await joinA()
+        run("/ignore pepe", in: channel)
+        run("/ignore pepe", in: channel)
+        #expect(channel.lines.last?.text == "Already ignoring pepe!*@*.")
+        run("/ignore a!b!c@d", in: channel)
+        #expect(session.statusBuffer.lines.last?.kind == .error)
+        run("/ignore", in: channel)
+        #expect(channel.lines.last?.text == "Ignored: pepe!*@*")
+
+        let again = IRCSession(config: session.config, transport: FakeTransport())
+        #expect(again.ignores.map(\.pattern) == ["pepe!*@*"])
+    }
 }

@@ -51,6 +51,9 @@ struct ChatLine: Identifiable, Sendable, Codable {
     var presenceNick: String?
     /// True when delivered from history (chathistory) rather than live.
     var isHistorical: Bool
+    /// The sender's `user` and `host`, for matching hostmask ignores.
+    var sourceUser: String?
+    var sourceHost: String?
 
     init(id: UUID = UUID(), timestamp: Date, sender: String?, text: String,
          kind: Kind, isSelf: Bool = false, account: String? = nil,
@@ -58,7 +61,7 @@ struct ChatLine: Identifiable, Sendable, Codable {
          reactions: [String: Set<String>] = [:],
          redacted: Bool = false, redactedBy: String? = nil, redactionReason: String? = nil,
          presence: Presence? = nil, presenceNick: String? = nil,
-         isHistorical: Bool = false) {
+         isHistorical: Bool = false, sourceUser: String? = nil, sourceHost: String? = nil) {
         self.id = id
         self.timestamp = timestamp
         self.sender = sender
@@ -75,6 +78,8 @@ struct ChatLine: Identifiable, Sendable, Codable {
         self.presence = presence
         self.presenceNick = presenceNick
         self.isHistorical = isHistorical
+        self.sourceUser = sourceUser
+        self.sourceHost = sourceHost
     }
 }
 
@@ -149,6 +154,9 @@ final class Buffer: Identifiable {
     var historyExhausted: Bool = false
     /// Live typing state (+typing client tag): nick → last "active" instant.
     var typing: [String: Date] = [:]
+    /// Lines from ignored senders: kept (so un-ignoring shows them again) but
+    /// left out of unread counts. Set by the owning session.
+    var isHidden: (ChatLine) -> Bool = { _ in false }
     /// Server msgids already processed — lines shown AND stateful TAGMSGs
     /// (reactions) applied — so a duplicate delivery (reconnect catch-up overlap,
     /// event-playback replay, multi-batch) is dropped instead of applied twice.
@@ -245,7 +253,7 @@ final class Buffer: Identifiable {
     func recomputeUnread() {
         guard let marker = readMarker else { return }
         let count = lines.filter {
-            !$0.isSelf && $0.kind.countsAsUnread && $0.timestamp > marker
+            !$0.isSelf && $0.kind.countsAsUnread && $0.timestamp > marker && !isHidden($0)
         }.count
         unreadCount = count
         if count == 0 { hasMention = false }
@@ -256,7 +264,7 @@ final class Buffer: Identifiable {
     var firstUnreadID: UUID? {
         guard let marker = readMarker else { return nil }
         return lines.first {
-            !$0.isSelf && $0.kind.countsAsUnread && $0.timestamp > marker
+            !$0.isSelf && $0.kind.countsAsUnread && $0.timestamp > marker && !isHidden($0)
         }?.id
     }
 
