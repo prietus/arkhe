@@ -447,5 +447,17 @@ struct SessionTests {
 
         let again = IRCSession(config: session.config, transport: FakeTransport())
         #expect(again.ignores.map(\.pattern) == ["pepe!*@*"])
+        // The notification extension reads every server's rules from the App Group.
+        #expect(IgnoreStore.loadAll().map(\.pattern).contains("pepe!*@*"))
+    }
+
+    @Test("Phase-1 lists in the app's own defaults move to the shared store")
+    func ignoreMigration() throws {
+        let id = UUID()
+        defer { IgnoreStore.delete(id) }
+        let old = try JSONEncoder().encode([try #require(IgnoreMask(parsing: "legacy"))])
+        UserDefaults.standard.set(old, forKey: "ignores.\(id.uuidString)")
+        #expect(IgnoreStore.load(id).map(\.pattern) == ["legacy!*@*"])
+        #expect(IgnoreStore.loadAll().map(\.pattern).contains("legacy!*@*"))
     }
 }

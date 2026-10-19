@@ -101,6 +101,16 @@ struct ServerEditView: View {
                 Toggle("Connect on launch", isOn: $autoConnect)
             }
 
+            if let server {
+                Section {
+                    NavigationLink {
+                        IgnoreListView(server: server)
+                    } label: {
+                        Label("Ignored users", systemImage: "eye.slash")
+                    }
+                }
+            }
+
             if server != nil {
                 Section {
                     Button(role: .destructive) { delete() } label: {
