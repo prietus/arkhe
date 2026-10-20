@@ -2016,10 +2016,18 @@ final class IRCSession: Identifiable {
 
     // MARK: - Helpers
 
+    /// Joins the configured channels and — on a direct connection — the ones
+    /// open in the sidebar, so a reconnect (or a launch with restored history)
+    /// puts you back where you were. A bouncer rejoins you itself.
     private func autoJoin() {
-        for channel in config.autoJoinChannels where !channel.isEmpty {
-            join(channel)
+        var channels = config.autoJoinChannels.filter { !$0.isEmpty }
+        if !config.isBouncer {
+            for buffer in buffers where buffer.kind == .channel
+                && !channels.contains(where: { isupport.equalIdentifiers($0, buffer.name) }) {
+                channels.append(buffer.name)
+            }
         }
+        for channel in channels { join(channel) }
     }
 
     /// One-time heads-up when the network's `CLIENTTAGDENY` blocks reactions, so

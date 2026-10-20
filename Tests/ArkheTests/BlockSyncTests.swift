@@ -19,7 +19,7 @@ struct BlockSyncTests {
         TargetFlagStore.save(muted, .muted, id)
         TargetFlagStore.saveSynced(mutedSynced, .muted, id)
         return IRCSession(config: SessionConfig(id: id, host: "bnc.test", nickname: "me",
-                                                username: "me/libera"),
+                                                username: "me/libera", isBouncer: true),
                           transport: transport)
     }
 

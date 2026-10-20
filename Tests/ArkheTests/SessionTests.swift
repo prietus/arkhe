@@ -660,4 +660,16 @@ struct SessionTests {
         #expect(buffer("testnet.ergo.chat") == nil)
         #expect(buffer("bob") != nil)
     }
+
+    // MARK: - Rejoin
+
+    @Test("A direct connection rejoins the channels open in the sidebar")
+    func rejoinOpenChannels() async {
+        session.restoreHistory(.init(buffers: [
+            .init(name: "#test", kind: .channel, topic: nil, readMarker: nil, historyExhausted: false,
+                  lines: [ChatLine(timestamp: Date(), sender: "a", text: "hi", kind: .message, isHistorical: true)]),
+        ]))
+        await register()
+        #expect(await sent("JOIN #test"))
+    }
 }

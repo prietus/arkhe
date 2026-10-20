@@ -10,6 +10,34 @@ struct MemberListView: View {
     @Environment(Preferences.self) private var prefs
 
     var body: some View {
+        if buffer.members.isEmpty {
+            emptyState
+                .onAppear { session.loadMembersIfNeeded(buffer) }
+        } else {
+            roster
+        }
+    }
+
+    /// Why there's nobody to list: not in the channel (offer to join), or the
+    /// list is still on its way.
+    @ViewBuilder private var emptyState: some View {
+        if !buffer.isJoined {
+            ContentUnavailableView {
+                Label("You're not in this channel", systemImage: "person.2.slash")
+            } description: {
+                Text("Join \(buffer.name) to see who's here.")
+            } actions: {
+                Button("Join") { session.join(buffer.name) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(session.status != .connected)
+            }
+        } else {
+            ProgressView("Loading members…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private var roster: some View {
         List(buffer.sortedMembers) { member in
             Button {
                 onSelect(member.nick)
