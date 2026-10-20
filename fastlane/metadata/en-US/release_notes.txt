@@ -1,2 +1,8 @@
-• Fixed older history sometimes stopping too early in busy channels on bouncers like soju.
-• Successful sign-in messages no longer appear in red in the status window.
+• Ignore people: long-press a message or a member, or type /ignore nick. Their messages are hidden and never notify you; /unignore or Edit server → Ignored users brings them back. Ignore by nick, hostmask (with * and ? wildcards) or account.
+• On a soju bouncer, ignores, muted and pinned conversations sync with your other clients, and soju stops push notifications from people you ignore.
+• Pin conversations to the top of the list, and mute them per server.
+• See whether the people you chat with privately are online, away or offline.
+• Channel invitations now show up, with a notification, and /invite lets you send them.
+• Push notifications on Ergo servers that support them.
+• Avatars, display names and pronouns in the member list on servers that share them.
+• Fixed older history sometimes stopping too early in busy channels, and successful sign-ins no longer appear in red.
