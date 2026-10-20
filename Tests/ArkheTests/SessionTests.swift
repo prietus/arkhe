@@ -544,13 +544,18 @@ struct SessionTests {
 
     // MARK: - Web Push
 
-    @Test("The IRCv3 draft/webpush works like soju.im/webpush (Ergo)")
+    @Test("The IRCv3 draft/webpush works like soju.im/webpush (Ergo), once logged in")
     func draftWebPush() async {
         var ready = 0
         session.onWebPushReady = { ready += 1 }
-        await register(extraCaps: "draft/webpush")
-        #expect(session.supportsWebPush)
+        await register(extraCaps: "draft/webpush soju.im/webpush")
+        // Ergo FAILs a subscription from a client that isn't logged in.
+        #expect(!session.supportsWebPush)
+        #expect(ready == 0)
+        await transport.receive(":srv 900 me me!u@h me :You are now logged in as me")
+        #expect(await eventually { session.supportsWebPush })
         #expect(ready == 1)
+        #expect(session.statusBuffer.lines.last?.kind == .event)
         session.registerWebPush(endpoint: "https://push.example/v1/t", p256dh: "P", auth: "A")
         #expect(await sent("WEBPUSH REGISTER https://push.example/v1/t p256dh=P;auth=A"))
     }
@@ -625,5 +630,34 @@ struct SessionTests {
         #expect(await eventually { channel.membersLoaded == false })
         session.loadMembersIfNeeded(channel)
         #expect(await eventually { await count("NAMES #a") == 2 })
+    }
+
+    // MARK: - Ergo specifics
+
+    @Test("Ergo offering soju.im/webpush isn't mistaken for soju: profile keys are subscribed")
+    func ergoIsNotSoju() async {
+        await register(extraCaps: "draft/metadata-2 soju.im/webpush")
+        #expect(await sent("METADATA * SUB avatar display-name pronouns"))
+    }
+
+    @Test("A server NOTICE goes to the status window, not a private conversation")
+    func serverNotice() async {
+        await register(isupport: "MONITOR=100 MSGREFTYPES=timestamp")
+        await transport.receive(":testnet.ergo.chat NOTICE me :This server is in debug mode",
+                                ":srv 376 me :End of MOTD")
+        #expect(await eventually { session.statusBuffer.lines.contains { $0.text == "This server is in debug mode" } })
+        #expect(buffer("testnet.ergo.chat") == nil)
+        #expect(await transport.sent.allSatisfy { !$0.contains("testnet.ergo.chat") })
+    }
+
+    @Test("A restored 'query' named like a server is dropped")
+    func restoredServerQueryDropped() {
+        let line = ChatLine(timestamp: Date(), sender: "testnet.ergo.chat", text: "x", kind: .notice, isHistorical: true)
+        session.restoreHistory(.init(buffers: [
+            .init(name: "testnet.ergo.chat", kind: .query, topic: nil, readMarker: nil, historyExhausted: false, lines: [line]),
+            .init(name: "bob", kind: .query, topic: nil, readMarker: nil, historyExhausted: false, lines: [line]),
+        ]))
+        #expect(buffer("testnet.ergo.chat") == nil)
+        #expect(buffer("bob") != nil)
     }
 }

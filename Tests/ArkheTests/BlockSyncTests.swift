@@ -41,7 +41,9 @@ struct BlockSyncTests {
                  serverState: [String] = []) async {
         session.connect()
         #expect(await sent("CAP LS 302"))
-        await transport.receive(":srv CAP * LS :\(caps)", ":srv CAP * ACK :\(caps)", ":srv 001 me :Welcome")
+        // Like soju: bouncer-networks is offered but not taken on a bound connection.
+        await transport.receive(":srv CAP * LS :\(caps) soju.im/bouncer-networks", ":srv CAP * ACK :\(caps)",
+                                ":srv 001 me :Welcome")
         #expect(await eventually { session.status == .connected })
         guard caps.contains("draft/metadata-2") else { return }
         #expect(await sent("METADATA * SUB soju.im/blocked soju.im/muted soju.im/pinned"))

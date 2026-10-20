@@ -63,7 +63,8 @@ final class IRCSession: Identifiable {
     /// Whether the connected bouncer offers Web Push (`soju.im/webpush`).
     /// soju's `soju.im/webpush` or the IRCv3 `draft/webpush` (Ergo offers both).
     var supportsWebPush: Bool {
-        enabledCaps.contains(CapabilityName.webpush) || enabledCaps.contains(CapabilityName.draftWebpush)
+        isAuthenticated
+            && (enabledCaps.contains(CapabilityName.webpush) || enabledCaps.contains(CapabilityName.draftWebpush))
     }
 
     /// Invoked once negotiation finishes and the bouncer supports Web Push, so
@@ -216,6 +217,17 @@ final class IRCSession: Identifiable {
         return url
     }
 
+    /// The server is soju. It always offers `soju.im/bouncer-networks` (even
+    /// when we don't take it on a bound connection); any `soju.im/` cap won't
+    /// do — Ergo offers `soju.im/webpush` too.
+    private var isSoju: Bool {
+        negotiator.available.contains { $0.name == CapabilityName.bouncerNetworks }
+    }
+
+    /// We're logged in to an account (SASL, or a later RPL_LOGGEDIN): servers
+    /// only take a Web Push subscription then — Ergo FAILs it otherwise.
+    private(set) var isAuthenticated = false
+
     /// The initial soju metadata sync has finished for every key.
     var isMetadataSynced: Bool { metadataSyncing.isEmpty && !metadataActive.isEmpty }
 
@@ -223,7 +235,7 @@ final class IRCSession: Identifiable {
     /// network; the multi-network connection rejects it).
     private var canSyncMetadata: Bool {
         enabledCaps.contains(CapabilityName.metadata) && config.isExplicitlyBound
-            && enabledCaps.contains { $0.hasPrefix("soju.im/") }
+            && isSoju
     }
 
     /// Whether CHATHISTORY takes `msgid=` references here (`MSGREFTYPES`).
@@ -285,6 +297,7 @@ final class IRCSession: Identifiable {
         metadataSyncing = []
         metadataActive = []
         metadataServerState = [:]
+        isAuthenticated = false
         monitored = []
         monitorStarted = false
         negotiator = CapabilityNegotiator(desired: config.desiredCaps, mechanism: config.saslMechanism)
@@ -971,6 +984,7 @@ final class IRCSession: Identifiable {
             saslMessage = reason
             addStatus("⚠️ SASL failed: \(reason)", kind: .error)
         } else if case .succeeded = negotiator.saslResult {
+            isAuthenticated = true
             let mechanism = negotiator.activeMechanism?.name ?? config.saslMode.rawValue.uppercased()
             addStatus("Authenticated via SASL (\(mechanism)).", kind: .event)
         }
@@ -1043,7 +1057,7 @@ final class IRCSession: Identifiable {
                 metadataSyncing = Set(Self.syncedMetadataKeys)
                 subscriptions += Self.syncedMetadataKeys
             }
-            if enabledCaps.contains(CapabilityName.metadata), !enabledCaps.contains(where: { $0.hasPrefix("soju.im/") }) {
+            if enabledCaps.contains(CapabilityName.metadata), !isSoju {
                 subscriptions += Self.userMetadataKeys
             }
             if !subscriptions.isEmpty {
@@ -1068,6 +1082,13 @@ final class IRCSession: Identifiable {
             handleWhoReply(message)
         case .whoSpcRpl:
             handleWhoxReply(message)
+        case .loggedIn:
+            // RPL_LOGGEDIN after registration (e.g. NickServ IDENTIFY): now a
+            // push subscription is accepted.
+            let wasAuthenticated = isAuthenticated
+            isAuthenticated = true
+            addStatus(message.parameters.dropFirst().joined(separator: " "), kind: .event)
+            if !wasAuthenticated, status == .connected, supportsWebPush { onWebPushReady?() }
         case .keyValue:
             // RPL_KEYVALUE <client> <target> <key> <visibility> [<value>] — the
             // answer to our own SET; same shape as a METADATA update after it.
@@ -1152,6 +1173,16 @@ final class IRCSession: Identifiable {
         // A part of a draft/multiline message: accumulate, emit on batch close.
         if let ref = message.tags["batch"], openBatches[ref]?.type == CapabilityName.multiline {
             accumulateMultiline(ref, message)
+            return
+        }
+        // A message from the server itself (no user@host, a dotted name) isn't a
+        // private conversation: it belongs in the status window.
+        if let source = message.source, !source.isUser, !isupport.isChannel(target) {
+            if text.hasPrefix("\u{01}") { return }
+            statusBuffer.append(ChatLine(timestamp: timestamp(from: message), sender: source.name, text: text,
+                                         kind: isNotice ? .notice : .message, msgid: message.tags["msgid"],
+                                         isHistorical: batchInfo(for: message)?.isHistory ?? false),
+                                markUnread: false)
             return
         }
         let sender = message.source?.nick ?? "*"
@@ -1765,7 +1796,10 @@ final class IRCSession: Identifiable {
     /// Recreates buffers from a saved snapshot. Call before connecting; the
     /// server's JOINs then mark the channels joined and trigger the catch-up.
     func restoreHistory(_ snapshot: HistoryStore.Snapshot) {
-        for saved in snapshot.buffers where saved.kind != .status {
+        // Nicks can't contain dots: a "query" named like a server was a server
+        // notice mistaken for a private message by older versions.
+        for saved in snapshot.buffers where saved.kind != .status
+            && !(saved.kind == .query && saved.name.contains(".")) {
             guard let buffer = buffer(named: saved.name, kind: saved.kind, createIfMissing: true),
                   buffer.lines.isEmpty else { continue }
             buffer.restore(saved)
