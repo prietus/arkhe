@@ -170,6 +170,27 @@ final class IRCSession: Identifiable {
     /// Client-side ignores (`/ignore`) for this server, persisted per config.
     private(set) var ignores: [IgnoreMask] = []
 
+    // Exact-nick ignores are mirrored to soju's block list (`soju.im/blocked`
+    // over draft/metadata-2), so they follow the user to other clients and soju
+    // itself drops the blocked nick's messages and pushes. Masks and accounts
+    // have no server-side equivalent and stay local.
+    /// `METADATA * SUB` sent; collecting soju's current block list.
+    private var blockSyncing = false
+    /// The initial state is merged; changes now flow both ways live.
+    private var blockSyncActive = false
+    /// Folded nick → nick, as soju reports them during the initial sync.
+    private var serverBlocked: [String: String] = [:]
+    /// Folded nicks blocked on soju at the last sync (persisted): the common
+    /// ancestor of the three-way merge on connect.
+    private var syncedBlocked: Set<String> = []
+
+    /// soju, on a connection bound to one network (soju keeps metadata per
+    /// network; the multi-network connection rejects it).
+    private var canSyncBlocks: Bool {
+        enabledCaps.contains(CapabilityName.metadata) && config.isExplicitlyBound
+            && enabledCaps.contains { $0.hasPrefix("soju.im/") }
+    }
+
     /// Whether CHATHISTORY takes `msgid=` references here (`MSGREFTYPES`).
     /// soju only takes timestamps and FAILs a msgid bound.
     private var acceptsMsgidReferences: Bool {
@@ -193,6 +214,7 @@ final class IRCSession: Identifiable {
         self.currentNick = config.nickname
         self.negotiator = CapabilityNegotiator(desired: config.desiredCaps, mechanism: config.saslMechanism)
         self.ignores = IgnoreStore.load(config.id)
+        self.syncedBlocked = IgnoreStore.loadSynced(config.id)
         let status = Buffer(name: config.name.isEmpty ? config.host : config.name, kind: .status)
         self.statusBuffer = status
         self.buffers = [status]
@@ -219,6 +241,9 @@ final class IRCSession: Identifiable {
         didCaptureCaps = false
         didWarnClientTagDeny = false
         serverSignalsHistoryEnd = false
+        blockSyncing = false
+        blockSyncActive = false
+        serverBlocked = [:]
         negotiator = CapabilityNegotiator(desired: config.desiredCaps, mechanism: config.saslMechanism)
         addStatus("Connecting to \(config.host):\(config.port)…", kind: .event)
 
@@ -484,19 +509,106 @@ final class IRCSession: Identifiable {
     /// Adds a rule. Returns false if it was already there.
     @discardableResult
     func ignore(_ mask: IgnoreMask) -> Bool {
-        guard ignoreIndex(of: mask) == nil else { return false }
-        ignores.append(mask)
-        ignoresChanged()
+        guard addRule(mask) else { return false }
+        if let nick = mask.plainNick { pushBlock(nick, true) }
         return true
     }
 
     /// Removes a rule. Returns false if there was no such rule.
     @discardableResult
     func unignore(_ mask: IgnoreMask) -> Bool {
-        guard let index = ignoreIndex(of: mask) else { return false }
-        ignores.remove(at: index)
+        // Mirror the stored rule (`Pepe`), not how it was typed (`pepe`).
+        guard let removed = removeRule(mask) else { return false }
+        if let nick = removed.plainNick { pushBlock(nick, false) }
+        return true
+    }
+
+    @discardableResult
+    private func addRule(_ mask: IgnoreMask) -> Bool {
+        guard ignoreIndex(of: mask) == nil else { return false }
+        ignores.append(mask)
         ignoresChanged()
         return true
+    }
+
+    /// Removes the rule equal to `mask` (case-insensitively) and returns it.
+    @discardableResult
+    private func removeRule(_ mask: IgnoreMask) -> IgnoreMask? {
+        guard let index = ignoreIndex(of: mask) else { return nil }
+        let removed = ignores.remove(at: index)
+        ignoresChanged()
+        return removed
+    }
+
+    // MARK: soju block-list sync
+
+    /// Mirrors an exact-nick ignore to soju. Offline (or before the initial
+    /// merge) nothing is sent; the next connect's merge carries the change.
+    private func pushBlock(_ nick: String, _ blocked: Bool) {
+        guard blockSyncActive else { return }
+        send(IRCMessage(command: "METADATA",
+                        parameters: [nick, "SET", CapabilityName.sojuBlocked, blocked ? "1" : "0"]))
+        recordSynced(nick, blocked)
+    }
+
+    private func recordSynced(_ nick: String, _ blocked: Bool) {
+        let key = isupport.caseMapping.fold(nick)
+        if blocked { syncedBlocked.insert(key) } else { syncedBlocked.remove(key) }
+        IgnoreStore.saveSynced(syncedBlocked, for: config.id)
+    }
+
+    /// A metadata value: during the initial sync it's soju's state (it reports
+    /// every known nick, `0` or `1`); afterwards a live change, possibly from
+    /// another client.
+    private func handleMetadata(target: String, key: String, value: String?) {
+        // Only nicks map to ignores; a blocked channel has no equivalent here.
+        guard key.lowercased() == CapabilityName.sojuBlocked, target != "*",
+              !isupport.isChannel(target) else { return }
+        let blocked = value == "1"
+        if blockSyncing {
+            if blocked { serverBlocked[isupport.caseMapping.fold(target)] = target }
+        } else if blockSyncActive {
+            if blocked {
+                if plainIgnore(for: target) == nil, let mask = IgnoreMask(parsing: target) { addRule(mask) }
+            } else if let rule = plainIgnore(for: target) {
+                removeRule(rule)
+            }
+            recordSynced(target, blocked)
+        }
+    }
+
+    /// Three-way merge of soju's block list, the local exact-nick ignores and
+    /// the state at the last sync, so neither side's changes made while apart
+    /// are lost or resurrected.
+    private func finishBlockSync() {
+        blockSyncing = false
+        var local: [String: String] = [:]
+        for rule in ignores {
+            if let nick = rule.plainNick { local[isupport.caseMapping.fold(nick)] = nick }
+        }
+        var toServer: [(String, Bool)] = []
+        for (key, nick) in serverBlocked where local[key] == nil {
+            if syncedBlocked.contains(key) {
+                toServer.append((nick, false))                  // unignored here while away
+            } else if let mask = IgnoreMask(parsing: nick) {
+                addRule(mask)                                    // blocked from another client
+            }
+        }
+        for (key, nick) in local where serverBlocked[key] == nil {
+            if syncedBlocked.contains(key) {
+                if let rule = plainIgnore(for: nick) { removeRule(rule) }   // unblocked elsewhere
+            } else {
+                toServer.append((nick, true))                   // ignored here while away
+            }
+        }
+        serverBlocked = [:]
+        blockSyncActive = true
+        for (nick, blocked) in toServer {
+            send(IRCMessage(command: "METADATA",
+                            parameters: [nick, "SET", CapabilityName.sojuBlocked, blocked ? "1" : "0"]))
+        }
+        syncedBlocked = Set(ignores.compactMap { $0.plainNick.map(isupport.caseMapping.fold) })
+        IgnoreStore.saveSynced(syncedBlocked, for: config.id)
     }
 
     /// The rule equal to `mask` under the network's casemapping, since IRC
@@ -719,6 +831,11 @@ final class IRCSession: Identifiable {
             handleTagMsg(message)
         case "INVITE":
             handleInvite(message)
+        case "METADATA":
+            // METADATA <target> <key> <visibility> [<value>]
+            if let target = message.first, let key = message.parameter(1) {
+                handleMetadata(target: target, key: key, value: message.parameter(3))
+            }
         case "REDACT":
             handleRedact(message)
         case "FAIL", "WARN", "NOTE":
@@ -806,6 +923,10 @@ final class IRCSession: Identifiable {
             if let nick = message.first { currentNick = nick }
             addStatus(message.trailing ?? "Connected.", kind: .event)
             autoJoin()
+            if canSyncBlocks {
+                blockSyncing = true
+                send(IRCMessage(command: "METADATA", parameters: ["*", "SUB", CapabilityName.sojuBlocked]))
+            }
             // Channels catch up when the server (re-)JOINs us; queries get no
             // JOIN, so catch up the ones we already hold scrollback for here.
             for buffer in buffers where buffer.kind == .query && buffer.loadedHistory {
@@ -825,6 +946,21 @@ final class IRCSession: Identifiable {
             handleWhoReply(message)
         case .whoSpcRpl:
             handleWhoxReply(message)
+        case .keyValue:
+            // RPL_KEYVALUE <client> <target> <key> <visibility> [<value>] — the
+            // answer to our own SET; same shape as a METADATA update after it.
+            if message.parameters.count >= 4 {
+                handleMetadata(target: message.parameters[1], key: message.parameters[2],
+                               value: message.parameters.count > 4 ? message.parameters[4] : nil)
+            }
+        case .metadataSubOK:
+            if blockSyncing, message.parameters.dropFirst().contains(where: {
+                $0.lowercased() == CapabilityName.sojuBlocked
+            }) {
+                finishBlockSync()
+            }
+        case .metadataUnsubOK, .metadataSubs:
+            break
         case .inviting:
             // RPL_INVITING <me> <nick> <channel> — our /invite went through.
             if let nick = message.parameter(1), let channel = message.parameter(2) {

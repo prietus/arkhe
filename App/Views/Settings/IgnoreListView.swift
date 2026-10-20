@@ -47,7 +47,7 @@ struct IgnoreListView: View {
             } header: {
                 Text("Ignored")
             } footer: {
-                Text("Messages from ignored people are hidden and never notify you. With the app closed, a push from them shows only a silent “New message”.")
+                Text("Messages from ignored people are hidden and never notify you. On a soju bouncer, plain nicks are also blocked there: they sync with your other clients and soju stops their push notifications. Otherwise, with the app closed, a push from them shows only a silent “New message”.")
             }
         }
         .navigationTitle("Ignored users")

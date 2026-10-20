@@ -65,6 +65,9 @@ public enum CapabilityName {
     public static let bouncerNetworks = "soju.im/bouncer-networks"
     public static let bouncerNetworksNotify = "soju.im/bouncer-networks-notify"
     public static let sojuNoImplicitNames = "soju.im/no-implicit-names"
+    /// soju's per-target metadata keys (over `draft/metadata-2`): its block list
+    /// drops a blocked nick's messages and pushes on the bouncer itself.
+    public static let sojuBlocked = "soju.im/blocked"
     /// Web Push: lets the bouncer push highlights/DMs while the app is closed.
     public static let webpush = "soju.im/webpush"
 
@@ -76,5 +79,6 @@ public enum CapabilityName {
         multiPrefix, userhostInNames, capNotify, setname, inviteNotify,
         standardReplies, chathistory, eventPlayback, messageRedaction, readMarker,
         multiline, bouncerNetworks, bouncerNetworksNotify, noImplicitNames, sojuNoImplicitNames, webpush,
+        metadata,
     ]
 }

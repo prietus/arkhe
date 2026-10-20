@@ -33,7 +33,7 @@ struct SessionConfig: Sendable, Identifiable {
 
     /// A config built directly, without a stored `ServerConfig` (tests, presets).
     init(id: UUID = UUID(), name: String = "", host: String, port: UInt16 = 6697,
-         useTLS: Bool = true, nickname: String, saslMode: SASLMode = .none,
+         useTLS: Bool = true, nickname: String, username: String? = nil, saslMode: SASLMode = .none,
          saslAccount: String = "", saslPassword: String? = nil, isBouncer: Bool = false) {
         self.id = id
         self.name = name
@@ -42,7 +42,7 @@ struct SessionConfig: Sendable, Identifiable {
         self.useTLS = useTLS
         allowInvalidCertificates = false
         self.nickname = nickname
-        username = nickname
+        self.username = username ?? nickname
         realName = nickname
         self.saslMode = saslMode
         self.saslAccount = saslAccount

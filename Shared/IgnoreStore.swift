@@ -31,7 +31,19 @@ enum IgnoreStore {
 
     static func delete(_ id: UUID) {
         defaults.removeObject(forKey: key(id))
+        defaults.removeObject(forKey: syncedKey(id))
         UserDefaults.standard.removeObject(forKey: key(id))
+    }
+
+    /// The nicks (case-folded) that were blocked on the bouncer at the last
+    /// `soju.im/blocked` sync — the common ancestor for the three-way merge on
+    /// the next connect, which tells "unblocked elsewhere" from "blocked here".
+    static func loadSynced(_ id: UUID) -> Set<String> {
+        Set(defaults.stringArray(forKey: syncedKey(id)) ?? [])
+    }
+
+    static func saveSynced(_ nicks: Set<String>, for id: UUID) {
+        defaults.set(nicks.sorted(), forKey: syncedKey(id))
     }
 
     /// Every server's rules together. A push doesn't say which server it came
@@ -57,4 +69,6 @@ enum IgnoreStore {
     }
 
     private static func key(_ id: UUID) -> String { prefix + id.uuidString }
+    // Deliberately outside `prefix`, so `loadAll()` doesn't read it as rules.
+    private static func syncedKey(_ id: UUID) -> String { "ignoresync." + id.uuidString }
 }
