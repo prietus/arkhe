@@ -29,6 +29,7 @@ public enum IRCNumeric: Int, Sendable {
     case metadataSubOK = 770    // RPL_METADATASUBOK
     case metadataUnsubOK = 771  // RPL_METADATAUNSUBOK
     case metadataSubs = 772     // RPL_METADATASUBS
+    case metadataSyncLater = 774 // RPL_METADATASYNCLATER
     case endOfWho = 315         // RPL_ENDOFWHO
     case whoReply = 352         // RPL_WHOREPLY
     case namReply = 353         // RPL_NAMREPLY

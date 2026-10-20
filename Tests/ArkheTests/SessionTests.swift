@@ -554,4 +554,43 @@ struct SessionTests {
         session.registerWebPush(endpoint: "https://push.example/v1/t", p256dh: "P", auth: "A")
         #expect(await sent("WEBPUSH REGISTER https://push.example/v1/t p256dh=P;auth=A"))
     }
+
+    // MARK: - Profile metadata (draft/metadata-2)
+
+    @Test("Profile keys are subscribed on non-soju servers and tracked per nick")
+    func profileMetadata() async {
+        await register(extraCaps: "draft/metadata-2")
+        #expect(await sent("METADATA * SUB avatar display-name pronouns"))
+        await transport.receive(":srv METADATA Bob avatar * :https://img.example/bob.png",
+                                ":srv METADATA bob display-name * :Bob Ross",
+                                ":srv METADATA #chan avatar * :https://img.example/chan.png",
+                                ":srv METADATA bob avatar-url * :ignored")
+        #expect(await eventually { session.metadata(for: "BOB")["display-name"] == "Bob Ross" })
+        #expect(session.avatarURL(for: "bob")?.host == "img.example")
+        #expect(session.metadata(for: "#chan").isEmpty)
+        #expect(session.metadata(for: "bob")["avatar-url"] == nil)
+
+        // It follows a nick change, and a cleared key goes away.
+        await transport.receive(":bob!b@h NICK robert", ":srv METADATA robert display-name *")
+        #expect(await eventually {
+            session.metadata(for: "robert")["avatar"] != nil && session.metadata(for: "robert")["display-name"] == nil
+        })
+        #expect(session.metadata(for: "robert")["avatar"] == "https://img.example/bob.png")
+        #expect(session.metadata(for: "bob").isEmpty)
+    }
+
+    @Test("Only http(s) avatars are used")
+    func avatarScheme() async {
+        await register(extraCaps: "draft/metadata-2")
+        await transport.receive(":srv METADATA eve avatar * :javascript:alert(1)")
+        #expect(await eventually { session.metadata(for: "eve")["avatar"] != nil })
+        #expect(session.avatarURL(for: "eve") == nil)
+    }
+
+    @Test("RPL_METADATASYNCLATER retries with METADATA SYNC")
+    func metadataSyncLater() async {
+        await register(extraCaps: "draft/metadata-2")
+        await transport.receive(":srv 774 me #big 0")
+        #expect(await sent("METADATA #big SYNC"))
+    }
 }

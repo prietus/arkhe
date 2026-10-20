@@ -7,6 +7,7 @@ struct MemberListView: View {
     /// For ignoring / un-ignoring members from their row's menu.
     let session: IRCSession
     let onSelect: (String) -> Void
+    @Environment(Preferences.self) private var prefs
 
     var body: some View {
         List(buffer.sortedMembers) { member in
@@ -18,11 +19,23 @@ struct MemberListView: View {
                         .foregroundStyle(prefixColor(member))
                         .font(.body.monospaced())
                         .frame(width: 12)
+                    // draft/metadata-2 avatar, fetched only with media auto-loading
+                    // on (like link previews, it reveals our IP to its host).
+                    if prefs.autoLoadMedia, let avatar = session.avatarURL(for: member.nick) {
+                        AsyncImage(url: avatar) { image in
+                            image.resizable().scaledToFill()
+                        } placeholder: {
+                            Color.secondary.opacity(0.2)
+                        }
+                        .frame(width: 24, height: 24)
+                        .clipShape(Circle())
+                        .accessibilityHidden(true)
+                    }
                     VStack(alignment: .leading, spacing: 1) {
                         Text(member.nick)
                             .foregroundStyle(.primary)
-                        if let realname = member.realname, !realname.isEmpty {
-                            Text(realname)
+                        if let subtitle = subtitle(member) {
+                            Text(subtitle)
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)
@@ -79,6 +92,18 @@ struct MemberListView: View {
                 }
             }
         }
+    }
+
+    /// Display name and pronouns (draft/metadata-2), then the realname — each
+    /// only when it adds something beyond the nick.
+    private func subtitle(_ member: Member) -> String? {
+        let profile = session.metadata(for: member.nick)
+        let parts = [profile["display-name"], profile["pronouns"], member.realname]
+            .compactMap { $0?.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && $0 != member.nick }
+        var seen = Set<String>()
+        let unique = parts.filter { seen.insert($0.lowercased()).inserted }
+        return unique.isEmpty ? nil : unique.joined(separator: " · ")
     }
 
     private func prefixSymbol(_ member: Member) -> String {

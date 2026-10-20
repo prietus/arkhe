@@ -200,6 +200,22 @@ final class IRCSession: Identifiable {
     private var monitored: Set<String> = []
     private var monitorStarted = false
 
+    /// Other users' profile metadata (draft/metadata-2) — avatar, display name,
+    /// pronouns — keyed by folded nick. Read-only: we don't publish our own.
+    private(set) var userMetadata: [String: [String: String]] = [:]
+    static let userMetadataKeys = ["avatar", "display-name", "pronouns"]
+
+    func metadata(for nick: String) -> [String: String] {
+        userMetadata[isupport.caseMapping.fold(nick)] ?? [:]
+    }
+
+    /// An `avatar` that's a usable http(s) URL.
+    func avatarURL(for nick: String) -> URL? {
+        guard let raw = metadata(for: nick)["avatar"], let url = URL(string: raw),
+              url.scheme == "https" || url.scheme == "http" else { return nil }
+        return url
+    }
+
     /// The initial soju metadata sync has finished for every key.
     var isMetadataSynced: Bool { metadataSyncing.isEmpty && !metadataActive.isEmpty }
 
@@ -659,6 +675,16 @@ final class IRCSession: Identifiable {
     /// another client.
     private func handleMetadata(target: String, key: String, value: String?) {
         let key = key.lowercased()
+        if Self.userMetadataKeys.contains(key) {
+            guard target != "*", !isupport.isChannel(target) else { return }
+            let nick = isupport.caseMapping.fold(target)
+            if let value, !value.isEmpty {
+                userMetadata[nick, default: [:]][key] = value
+            } else {
+                userMetadata[nick]?[key] = nil       // key cleared
+            }
+            return
+        }
         guard Self.syncedMetadataKeys.contains(key), accepts(target, for: key) else { return }
         let on = value == "1"
         if metadataSyncing.contains(key) {
@@ -1010,9 +1036,18 @@ final class IRCSession: Identifiable {
             if let nick = message.first { currentNick = nick }
             addStatus(message.trailing ?? "Connected.", kind: .event)
             autoJoin()
+            // One subscription: soju's per-target flags on a bound soju
+            // connection; profile keys elsewhere (soju rejects any other key).
+            var subscriptions: [String] = []
             if canSyncMetadata {
                 metadataSyncing = Set(Self.syncedMetadataKeys)
-                send(IRCMessage(command: "METADATA", parameters: ["*", "SUB"] + Self.syncedMetadataKeys))
+                subscriptions += Self.syncedMetadataKeys
+            }
+            if enabledCaps.contains(CapabilityName.metadata), !enabledCaps.contains(where: { $0.hasPrefix("soju.im/") }) {
+                subscriptions += Self.userMetadataKeys
+            }
+            if !subscriptions.isEmpty {
+                send(IRCMessage(command: "METADATA", parameters: ["*", "SUB"] + subscriptions))
             }
             // Channels catch up when the server (re-)JOINs us; queries get no
             // JOIN, so catch up the ones we already hold scrollback for here.
@@ -1049,6 +1084,17 @@ final class IRCSession: Identifiable {
             }
         case .metadataUnsubOK, .metadataSubs:
             break
+        case .metadataSyncLater:
+            // RPL_METADATASYNCLATER <client> <target> [<retry-after>] — the server
+            // will have it later; ask again then (bounded, so a bad value can't stall).
+            if let target = message.parameter(1) {
+                let delay = min(max(Int(message.parameter(2) ?? "") ?? 5, 0), 60)
+                Task { [weak self] in
+                    try? await Task.sleep(for: .seconds(delay))
+                    guard let self, self.status == .connected else { return }
+                    self.send(IRCMessage(command: "METADATA", parameters: [target, "SYNC"]))
+                }
+            }
         case .inviting:
             // RPL_INVITING <me> <nick> <channel> — our /invite went through.
             if let nick = message.parameter(1), let channel = message.parameter(2) {
@@ -1234,6 +1280,10 @@ final class IRCSession: Identifiable {
         guard let source = message.source, let newNick = message.first else { return }
         let historical = batchInfo(for: message)?.isHistory ?? false
         if !historical, isupport.equalIdentifiers(source.nick, currentNick) { currentNick = newNick }
+        // Profile metadata follows the person to their new nick.
+        if !historical, let profile = userMetadata.removeValue(forKey: isupport.caseMapping.fold(source.nick)) {
+            userMetadata[isupport.caseMapping.fold(newNick)] = profile
+        }
         for buffer in buffers where buffer.kind == .channel {
             if let idx = buffer.members.firstIndex(where: { isupport.equalIdentifiers($0.nick, source.nick) }) {
                 if !historical { buffer.members[idx].nick = newNick }
