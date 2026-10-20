@@ -193,6 +193,12 @@ struct ChatView: View {
                     withAnimation { proxy.scrollTo(request.lineID, anchor: .center) }
                 }
             }
+            // The roster is fetched when a channel is selected, but a channel
+            // opened before the server (re-)JOINs us — restored history at
+            // launch, or a reconnect while it's on screen — wasn't joined then.
+            .onChange(of: buffer.isJoined) { _, joined in
+                if joined { session.loadMembersIfNeeded(buffer) }
+            }
             .task(id: buffer.id) {
                 unreadDividerID = buffer.firstUnreadID
                 // Let the lazy list lay out, then settle on the newest line.

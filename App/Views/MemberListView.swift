@@ -72,6 +72,8 @@ struct MemberListView: View {
             }
             .contextMenu { ignoreMenu(member) }
         }
+        // Covers any path where the roster wasn't requested yet.
+        .onAppear { session.loadMembersIfNeeded(buffer) }
     }
 
     /// Ignore by nick, or by account when the member is logged in (follows

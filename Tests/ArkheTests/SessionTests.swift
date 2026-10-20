@@ -593,4 +593,37 @@ struct SessionTests {
         await transport.receive(":srv 774 me #big 0")
         #expect(await sent("METADATA #big SYNC"))
     }
+
+    @Test("Ergo's real sequence: late SUB, 774 *ALL, SYNC, 761s in a metadata batch")
+    func ergoMetadataSequence() async throws {
+        await register(extraCaps: "draft/metadata-2")
+        await transport.receive(":me!u@h JOIN #chat",
+                                "@time=\(Self.time(0)) :srv BATCH +3 metadata #chat",
+                                "@time=\(Self.time(0)) :srv BATCH -3",
+                                ":srv 770 me avatar display-name pronouns",
+                                ":srv 774 * *ALL 0 :Try again later")
+        #expect(await sent("METADATA *ALL SYNC"))
+        await transport.receive("@time=\(Self.time(1)) :srv BATCH +4 metadata *ALL",
+                                "@batch=4;time=\(Self.time(1)) :srv 761 * knowmadic avatar * https://www.seraphirc.chat/assets/seraphirc.png",
+                                "@batch=4;time=\(Self.time(1)) :srv 761 * knowmadic pronouns * He/Him",
+                                "@time=\(Self.time(1)) :srv BATCH -4")
+        #expect(await eventually { session.metadata(for: "knowmadic")["pronouns"] == "He/Him" })
+        #expect(session.avatarURL(for: "knowmadic") != nil)
+    }
+
+    // MARK: - Roster loading
+
+    @Test("A channel viewed before it was joined loads its roster once joined")
+    func rosterAfterLateJoin() async throws {
+        await register()
+        await transport.receive(":me!u@h JOIN #a")
+        let channel = try #require(await eventually { buffer("#a")?.isJoined == true } ? buffer("#a") : nil)
+        // Viewing it loads the roster; a reconnect's JOIN invalidates it again.
+        session.loadMembersIfNeeded(channel)
+        #expect(await sent("NAMES #a"))
+        await transport.receive(":me!u@h JOIN #a")
+        #expect(await eventually { channel.membersLoaded == false })
+        session.loadMembersIfNeeded(channel)
+        #expect(await eventually { await count("NAMES #a") == 2 })
+    }
 }
