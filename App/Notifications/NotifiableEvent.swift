@@ -1,10 +1,10 @@
 import Foundation
 
 /// A locally-detected event worth alerting the user about: a highlight (someone
-/// said your nick in a channel) or a direct message. `IRCSession` builds these
+/// said your nick in a channel), a direct message, or an invitation to a channel. `IRCSession` builds these
 /// on the main actor; `NotificationManager` decides whether to surface them.
 struct NotifiableEvent: Sendable {
-    enum Kind: Sendable { case mention, directMessage }
+    enum Kind: Sendable { case mention, directMessage, invite }
 
     let kind: Kind
     /// The session (network) the message arrived on.
@@ -23,6 +23,7 @@ struct NotifiableEvent: Sendable {
     let sender: String
     let text: String
 
-    /// A mention is always in a channel; a direct message is a query.
+    /// A mention is always in a channel; a direct message is a query. An
+    /// invite opens the status window, where the /join hint is.
     var isChannel: Bool { kind == .mention }
 }

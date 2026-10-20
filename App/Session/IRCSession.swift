@@ -462,6 +462,14 @@ final class IRCSession: Identifiable {
             }
             note(unignore(mask) ? "No longer ignoring \(mask)." : "\(mask) isn't ignored.", in: buffer)
 
+        case "invite":
+            let parts = rest.split(separator: " ").map(String.init)
+            let channel = parts.count > 1 ? parts[1] : (buffer.kind == .channel ? buffer.name : nil)
+            guard let nick = parts.first, let channel else {
+                addStatus("Usage: /invite <nick> [#channel]", kind: .error); return
+            }
+            send(IRCMessage(command: "INVITE", parameters: [nick, channel]))
+
         case "raw", "quote":
             if let message = IRCMessage(parsing: rest) { send(message) }
             else { addStatus("Couldn't parse raw line.", kind: .error) }
@@ -709,6 +717,8 @@ final class IRCSession: Identifiable {
             handleMarkRead(message)
         case "TAGMSG":
             handleTagMsg(message)
+        case "INVITE":
+            handleInvite(message)
         case "REDACT":
             handleRedact(message)
         case "FAIL", "WARN", "NOTE":
@@ -815,6 +825,12 @@ final class IRCSession: Identifiable {
             handleWhoReply(message)
         case .whoSpcRpl:
             handleWhoxReply(message)
+        case .inviting:
+            // RPL_INVITING <me> <nick> <channel> — our /invite went through.
+            if let nick = message.parameter(1), let channel = message.parameter(2) {
+                let target = buffer(named: channel, kind: .channel, createIfMissing: false) ?? statusBuffer
+                note("Invited \(nick) to \(channel).", in: target)
+            }
         case .whoisBot:
             // RPL_WHOISBOT <me> <nick> :is a bot — flag them across rosters.
             if let nick = message.parameter(1) {
@@ -1486,6 +1502,33 @@ final class IRCSession: Identifiable {
     }
 
     /// `+draft/react` reaction.
+    /// `:inviter INVITE <nick> <channel>` — an invitation for us, or (with
+    /// `invite-notify`) a channel operator inviting someone else.
+    private func handleInvite(_ message: IRCMessage) {
+        guard let invitee = message.first, let channel = message.parameter(1),
+              let source = message.source else { return }
+        let historical = batchInfo(for: message)?.isHistory ?? false
+        if isupport.equalIdentifiers(invitee, currentNick) {
+            guard !isIgnored(nick: source.nick, user: source.user, host: source.host,
+                             account: message.tags["account"]) else { return }
+            let text = "\(source.nick) invited you to \(channel)"
+            statusBuffer.append(ChatLine(timestamp: timestamp(from: message), sender: nil,
+                                         text: "\(text) · /join \(channel)", kind: .event,
+                                         msgid: message.tags["msgid"], isHistorical: historical),
+                                markUnread: false)
+            guard !historical else { return }
+            onNotifiableEvent?(NotifiableEvent(
+                kind: .invite, sessionID: id, bufferID: statusBuffer.id,
+                conversation: channel, bufferName: statusBuffer.name,
+                msgid: message.tags["msgid"], sender: source.nick, text: text))
+        } else if let buffer = buffer(named: channel, kind: .channel, createIfMissing: false) {
+            buffer.append(ChatLine(timestamp: timestamp(from: message), sender: nil,
+                                   text: "\(source.nick) invited \(invitee)", kind: .event,
+                                   msgid: message.tags["msgid"], isHistorical: historical),
+                          markUnread: false)
+        }
+    }
+
     private func handleTagMsg(_ message: IRCMessage) {
         guard let target = message.first, let source = message.source else { return }
         let sender = source.nick

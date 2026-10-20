@@ -460,4 +460,40 @@ struct SessionTests {
         #expect(IgnoreStore.load(id).map(\.pattern) == ["legacy!*@*"])
         #expect(IgnoreStore.loadAll().map(\.pattern).contains("legacy!*@*"))
     }
+
+    // MARK: - INVITE
+
+    @Test("An invitation to us shows in status and notifies; an ignored inviter's doesn't")
+    func inviteToUs() async throws {
+        defer { IgnoreStore.delete(session.config.id) }
+        var events: [NotifiableEvent] = []
+        session.onNotifiableEvent = { events.append($0) }
+        let channel = try await joinA()
+        await transport.receive(":alice!a@h INVITE me #secret")
+        let status = session.statusBuffer
+        #expect(await eventually { status.lines.contains { $0.text == "alice invited you to #secret · /join #secret" } })
+        #expect(events.map(\.kind) == [.invite])
+        #expect(events.first?.conversation == "#secret")
+
+        run("/ignore troll", in: channel)
+        await transport.receive(":troll!t@h INVITE me #spam", ":bob!b@h INVITE me #ok")
+        #expect(await eventually { status.lines.contains { $0.text.hasPrefix("bob invited you") } })
+        #expect(!status.lines.contains { $0.text.contains("#spam") })
+        #expect(events.count == 2)
+    }
+
+    @Test("invite-notify shows in the channel; /invite sends and 341 confirms")
+    func inviteNotifyAndCommand() async throws {
+        let channel = try await joinA()
+        await transport.receive(":op!o@h INVITE carol #a")
+        #expect(await eventually { channel.lines.contains { $0.text == "op invited carol" } })
+
+        run("/invite dave", in: channel)
+        #expect(await sent("INVITE dave #a"))
+        await transport.receive(":srv 341 me dave #a")
+        #expect(await eventually { channel.lines.last?.text == "Invited dave to #a." })
+
+        run("/invite", in: channel)
+        #expect(session.statusBuffer.lines.last?.kind == .error)
+    }
 }

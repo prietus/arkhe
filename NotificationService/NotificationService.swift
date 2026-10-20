@@ -37,8 +37,23 @@ final class NotificationService: UNNotificationServiceExtension {
         if let contentHandler, let fallback { contentHandler(fallback) }
     }
 
-    /// Formats a decrypted PRIVMSG/NOTICE into the notification content.
+    /// Formats a decrypted PRIVMSG/NOTICE (or an INVITE) into the notification content.
     private func apply(_ message: IRCMessage, to content: UNMutableNotificationContent) {
+        if message.command == "INVITE", let channel = message.parameter(1), let source = message.source {
+            guard !isIgnored(source, account: message.tags["account"]) else {
+                content.title = "Arkhe"
+                content.subtitle = ""
+                content.body = "New message"
+                content.sound = nil
+                content.interruptionLevel = .passive
+                return
+            }
+            content.title = "Invitation"
+            content.subtitle = ""
+            content.body = "\(source.nick) invited you to \(channel)"
+            content.threadIdentifier = "invites"
+            return
+        }
         guard message.command == "PRIVMSG" || message.command == "NOTICE",
               let target = message.first, var text = message.trailing else { return }
         let sender = message.source?.nick ?? "?"

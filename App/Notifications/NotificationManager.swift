@@ -98,6 +98,7 @@ final class NotificationManager {
         switch event.kind {
         case .mention where !preferences.notifyOnMention: return
         case .directMessage where !preferences.notifyOnDirectMessage: return
+        case .invite where !preferences.notifyOnDirectMessage: return   // personal, like a DM
         default: break
         }
         if preferences.isMuted(event.bufferName) { return }
@@ -116,11 +117,15 @@ final class NotificationManager {
             content.subtitle = event.sender
         case .directMessage:
             content.title = event.sender
+        case .invite:
+            content.title = "Invitation"
         }
-        content.body = preferences.notificationPreviews ? event.text : "New message"
+        content.body = preferences.notificationPreviews ? event.text
+            : (event.kind == .invite ? "New invitation" : "New message")
         content.sound = preferences.notificationSound ? .default : nil
         content.threadIdentifier = event.bufferID.uuidString   // group per conversation
-        content.categoryIdentifier = NotificationCategory.message   // inline Reply action
+        // Inline Reply action — not for an invite, which has nobody to reply to.
+        if event.kind != .invite { content.categoryIdentifier = NotificationCategory.message }
         content.userInfo = [
             NotificationKey.session: event.sessionID.uuidString,
             NotificationKey.buffer: event.bufferID.uuidString,

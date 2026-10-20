@@ -24,6 +24,7 @@ public enum IRCNumeric: Int, Sendable {
     case topic = 332            // RPL_TOPIC
     case topicWhoTime = 333     // RPL_TOPICWHOTIME
     case whoisBot = 335         // RPL_WHOISBOT
+    case inviting = 341         // RPL_INVITING
     case endOfWho = 315         // RPL_ENDOFWHO
     case whoReply = 352         // RPL_WHOREPLY
     case namReply = 353         // RPL_NAMREPLY
