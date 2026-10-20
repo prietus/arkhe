@@ -68,6 +68,8 @@ public enum CapabilityName {
     /// soju's per-target metadata keys (over `draft/metadata-2`): its block list
     /// drops a blocked nick's messages and pushes on the bouncer itself.
     public static let sojuBlocked = "soju.im/blocked"
+    public static let sojuMuted = "soju.im/muted"
+    public static let sojuPinned = "soju.im/pinned"
     /// Web Push: lets the bouncer push highlights/DMs while the app is closed.
     public static let webpush = "soju.im/webpush"
 

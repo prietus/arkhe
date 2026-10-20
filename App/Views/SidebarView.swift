@@ -91,9 +91,18 @@ private struct ServerSection: View {
         }
     }
 
+    /// The status window first, then pinned conversations, then the rest — each
+    /// group in the order they were opened.
+    private func ordered(_ session: IRCSession) -> [Buffer] {
+        let rest = session.buffers.filter { $0.kind != .status }
+        return session.buffers.filter { $0.kind == .status }
+            + rest.filter { session.isPinned($0.name) }
+            + rest.filter { !session.isPinned($0.name) }
+    }
+
     @ViewBuilder private func buffers(of session: IRCSession) -> some View {
-        ForEach(session.buffers) { buffer in
-            BufferRow(buffer: buffer)
+        ForEach(ordered(session)) { buffer in
+            BufferRow(buffer: buffer, session: session)
                 .tag(buffer.id)
                 .swipeActions {
                     if buffer.kind != .status {
@@ -179,10 +188,11 @@ private struct ServerSection: View {
 }
 
 private struct BufferRow: View {
-    @Environment(Preferences.self) private var prefs
     let buffer: Buffer
+    let session: IRCSession
 
-    private var isMuted: Bool { prefs.isMuted(buffer.name) }
+    private var isMuted: Bool { session.isMuted(buffer.name) }
+    private var isPinned: Bool { session.isPinned(buffer.name) }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -192,6 +202,11 @@ private struct BufferRow: View {
             Text(buffer.name)
                 .lineLimit(1)
             Spacer()
+            if isPinned {
+                Image(systemName: "pin.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
             if isMuted {
                 Image(systemName: "bell.slash.fill")
                     .font(.caption2)
@@ -210,7 +225,12 @@ private struct BufferRow: View {
         .contextMenu {
             if buffer.kind != .status {
                 Button {
-                    prefs.setMuted(!isMuted, for: buffer.name)
+                    session.setPinned(!isPinned, for: buffer.name)
+                } label: {
+                    Label(isPinned ? "Unpin" : "Pin", systemImage: isPinned ? "pin.slash" : "pin")
+                }
+                Button {
+                    session.setMuted(!isMuted, for: buffer.name)
                 } label: {
                     Label(isMuted ? "Unmute" : "Mute",
                           systemImage: isMuted ? "bell" : "bell.slash")

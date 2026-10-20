@@ -170,23 +170,34 @@ final class IRCSession: Identifiable {
     /// Client-side ignores (`/ignore`) for this server, persisted per config.
     private(set) var ignores: [IgnoreMask] = []
 
-    // Exact-nick ignores are mirrored to soju's block list (`soju.im/blocked`
-    // over draft/metadata-2), so they follow the user to other clients and soju
-    // itself drops the blocked nick's messages and pushes. Masks and accounts
-    // have no server-side equivalent and stay local.
-    /// `METADATA * SUB` sent; collecting soju's current block list.
-    private var blockSyncing = false
-    /// The initial state is merged; changes now flow both ways live.
-    private var blockSyncActive = false
-    /// Folded nick → nick, as soju reports them during the initial sync.
-    private var serverBlocked: [String: String] = [:]
-    /// Folded nicks blocked on soju at the last sync (persisted): the common
-    /// ancestor of the three-way merge on connect.
-    private var syncedBlocked: Set<String> = []
+    /// Muted and pinned conversations on this server (lowercased names),
+    /// persisted per config. Muting only silences notifications.
+    private(set) var mutedTargets: Set<String> = []
+    private(set) var pinnedTargets: Set<String> = []
+
+    // On a soju bouncer, exact-nick ignores, mutes and pins are mirrored to its
+    // per-target metadata (`soju.im/blocked`, `soju.im/muted`, `soju.im/pinned`
+    // over draft/metadata-2), so they follow the user to other clients, and
+    // soju itself drops a blocked nick's messages and pushes (and a muted
+    // nick's pushes). Masks and accounts have no equivalent and stay local.
+    private static let syncedMetadataKeys = [CapabilityName.sojuBlocked, CapabilityName.sojuMuted,
+                                             CapabilityName.sojuPinned]
+    /// Keys whose `METADATA * SUB` is out; collecting soju's current state.
+    private var metadataSyncing: Set<String> = []
+    /// Keys whose initial state is merged; changes now flow both ways live.
+    private var metadataActive: Set<String> = []
+    /// Per key: normalized target → target, as soju reports them while syncing.
+    private var metadataServerState: [String: [String: String]] = [:]
+    /// Per key: normalized targets flagged on soju at the last sync (persisted)
+    /// — the common ancestor of the three-way merge on connect.
+    private var metadataSynced: [String: Set<String>] = [:]
+
+    /// The initial soju metadata sync has finished for every key.
+    var isMetadataSynced: Bool { metadataSyncing.isEmpty && !metadataActive.isEmpty }
 
     /// soju, on a connection bound to one network (soju keeps metadata per
     /// network; the multi-network connection rejects it).
-    private var canSyncBlocks: Bool {
+    private var canSyncMetadata: Bool {
         enabledCaps.contains(CapabilityName.metadata) && config.isExplicitlyBound
             && enabledCaps.contains { $0.hasPrefix("soju.im/") }
     }
@@ -214,7 +225,13 @@ final class IRCSession: Identifiable {
         self.currentNick = config.nickname
         self.negotiator = CapabilityNegotiator(desired: config.desiredCaps, mechanism: config.saslMechanism)
         self.ignores = IgnoreStore.load(config.id)
-        self.syncedBlocked = IgnoreStore.loadSynced(config.id)
+        self.mutedTargets = TargetFlagStore.load(.muted, config.id)
+        self.pinnedTargets = TargetFlagStore.load(.pinned, config.id)
+        self.metadataSynced = [
+            CapabilityName.sojuBlocked: IgnoreStore.loadSynced(config.id),
+            CapabilityName.sojuMuted: TargetFlagStore.loadSynced(.muted, config.id),
+            CapabilityName.sojuPinned: TargetFlagStore.loadSynced(.pinned, config.id),
+        ]
         let status = Buffer(name: config.name.isEmpty ? config.host : config.name, kind: .status)
         self.statusBuffer = status
         self.buffers = [status]
@@ -241,9 +258,9 @@ final class IRCSession: Identifiable {
         didCaptureCaps = false
         didWarnClientTagDeny = false
         serverSignalsHistoryEnd = false
-        blockSyncing = false
-        blockSyncActive = false
-        serverBlocked = [:]
+        metadataSyncing = []
+        metadataActive = []
+        metadataServerState = [:]
         negotiator = CapabilityNegotiator(desired: config.desiredCaps, mechanism: config.saslMechanism)
         addStatus("Connecting to \(config.host):\(config.port)…", kind: .event)
 
@@ -510,7 +527,7 @@ final class IRCSession: Identifiable {
     @discardableResult
     func ignore(_ mask: IgnoreMask) -> Bool {
         guard addRule(mask) else { return false }
-        if let nick = mask.plainNick { pushBlock(nick, true) }
+        if let nick = mask.plainNick { pushMetadataFlag(CapabilityName.sojuBlocked, nick, true) }
         return true
     }
 
@@ -519,7 +536,7 @@ final class IRCSession: Identifiable {
     func unignore(_ mask: IgnoreMask) -> Bool {
         // Mirror the stored rule (`Pepe`), not how it was typed (`pepe`).
         guard let removed = removeRule(mask) else { return false }
-        if let nick = removed.plainNick { pushBlock(nick, false) }
+        if let nick = removed.plainNick { pushMetadataFlag(CapabilityName.sojuBlocked, nick, false) }
         return true
     }
 
@@ -540,75 +557,135 @@ final class IRCSession: Identifiable {
         return removed
     }
 
-    // MARK: soju block-list sync
+    // MARK: Mute & pin
 
-    /// Mirrors an exact-nick ignore to soju. Offline (or before the initial
-    /// merge) nothing is sent; the next connect's merge carries the change.
-    private func pushBlock(_ nick: String, _ blocked: Bool) {
-        guard blockSyncActive else { return }
-        send(IRCMessage(command: "METADATA",
-                        parameters: [nick, "SET", CapabilityName.sojuBlocked, blocked ? "1" : "0"]))
-        recordSynced(nick, blocked)
+    func isMuted(_ name: String) -> Bool { mutedTargets.contains(name.lowercased()) }
+    func isPinned(_ name: String) -> Bool { pinnedTargets.contains(name.lowercased()) }
+
+    func setMuted(_ muted: Bool, for name: String) {
+        setLocalFlag(CapabilityName.sojuMuted, name, muted)
+        pushMetadataFlag(CapabilityName.sojuMuted, name, muted)
     }
 
-    private func recordSynced(_ nick: String, _ blocked: Bool) {
-        let key = isupport.caseMapping.fold(nick)
-        if blocked { syncedBlocked.insert(key) } else { syncedBlocked.remove(key) }
-        IgnoreStore.saveSynced(syncedBlocked, for: config.id)
+    func setPinned(_ pinned: Bool, for name: String) {
+        setLocalFlag(CapabilityName.sojuPinned, name, pinned)
+        pushMetadataFlag(CapabilityName.sojuPinned, name, pinned)
     }
 
-    /// A metadata value: during the initial sync it's soju's state (it reports
-    /// every known nick, `0` or `1`); afterwards a live change, possibly from
-    /// another client.
-    private func handleMetadata(target: String, key: String, value: String?) {
-        // Only nicks map to ignores; a blocked channel has no equivalent here.
-        guard key.lowercased() == CapabilityName.sojuBlocked, target != "*",
-              !isupport.isChannel(target) else { return }
-        let blocked = value == "1"
-        if blockSyncing {
-            if blocked { serverBlocked[isupport.caseMapping.fold(target)] = target }
-        } else if blockSyncActive {
-            if blocked {
+    // MARK: soju metadata sync (blocked / muted / pinned)
+
+    /// Ignores compare under the network's casemapping; mutes and pins are
+    /// stored lowercased (the notification layer has no casemapping).
+    private func normalized(_ target: String, for key: String) -> String {
+        key == CapabilityName.sojuBlocked ? isupport.caseMapping.fold(target) : target.lowercased()
+    }
+
+    /// Only nicks map to ignores; a blocked channel has no equivalent here.
+    private func accepts(_ target: String, for key: String) -> Bool {
+        target != "*" && (key != CapabilityName.sojuBlocked || !isupport.isChannel(target))
+    }
+
+    /// The local state for a key: normalized target → name to send.
+    private func localFlags(_ key: String) -> [String: String] {
+        switch key {
+        case CapabilityName.sojuBlocked:
+            var out: [String: String] = [:]
+            for rule in ignores { if let nick = rule.plainNick { out[isupport.caseMapping.fold(nick)] = nick } }
+            return out
+        case CapabilityName.sojuMuted:
+            return Dictionary(uniqueKeysWithValues: mutedTargets.map { ($0, $0) })
+        default:
+            return Dictionary(uniqueKeysWithValues: pinnedTargets.map { ($0, $0) })
+        }
+    }
+
+    /// Changes local state only (no METADATA sent).
+    private func setLocalFlag(_ key: String, _ target: String, _ on: Bool) {
+        switch key {
+        case CapabilityName.sojuBlocked:
+            if on {
                 if plainIgnore(for: target) == nil, let mask = IgnoreMask(parsing: target) { addRule(mask) }
             } else if let rule = plainIgnore(for: target) {
                 removeRule(rule)
             }
-            recordSynced(target, blocked)
+        case CapabilityName.sojuMuted:
+            if on { mutedTargets.insert(target.lowercased()) } else { mutedTargets.remove(target.lowercased()) }
+            TargetFlagStore.save(mutedTargets, .muted, config.id)
+        default:
+            if on { pinnedTargets.insert(target.lowercased()) } else { pinnedTargets.remove(target.lowercased()) }
+            TargetFlagStore.save(pinnedTargets, .pinned, config.id)
         }
     }
 
-    /// Three-way merge of soju's block list, the local exact-nick ignores and
-    /// the state at the last sync, so neither side's changes made while apart
-    /// are lost or resurrected.
-    private func finishBlockSync() {
-        blockSyncing = false
-        var local: [String: String] = [:]
-        for rule in ignores {
-            if let nick = rule.plainNick { local[isupport.caseMapping.fold(nick)] = nick }
+    private func saveSynced(_ key: String) {
+        let names = metadataSynced[key] ?? []
+        switch key {
+        case CapabilityName.sojuBlocked: IgnoreStore.saveSynced(names, for: config.id)
+        case CapabilityName.sojuMuted: TargetFlagStore.saveSynced(names, .muted, config.id)
+        default: TargetFlagStore.saveSynced(names, .pinned, config.id)
         }
+    }
+
+    private func recordSynced(_ key: String, _ target: String, _ on: Bool) {
+        let name = normalized(target, for: key)
+        if on { metadataSynced[key, default: []].insert(name) } else { metadataSynced[key]?.remove(name) }
+        saveSynced(key)
+    }
+
+    /// Mirrors a local change to soju. Offline (or before the initial merge)
+    /// nothing is sent; the next connect's merge carries the change.
+    private func pushMetadataFlag(_ key: String, _ target: String, _ on: Bool) {
+        guard metadataActive.contains(key) else { return }
+        sendMetadataFlag(key, target, on)
+        recordSynced(key, target, on)
+    }
+
+    private func sendMetadataFlag(_ key: String, _ target: String, _ on: Bool) {
+        send(IRCMessage(command: "METADATA", parameters: [target, "SET", key, on ? "1" : "0"]))
+    }
+
+    /// A metadata value: during the initial sync it's soju's state (it reports
+    /// every known target, `0` or `1`); afterwards a live change, possibly from
+    /// another client.
+    private func handleMetadata(target: String, key: String, value: String?) {
+        let key = key.lowercased()
+        guard Self.syncedMetadataKeys.contains(key), accepts(target, for: key) else { return }
+        let on = value == "1"
+        if metadataSyncing.contains(key) {
+            if on { metadataServerState[key, default: [:]][normalized(target, for: key)] = target }
+        } else if metadataActive.contains(key) {
+            setLocalFlag(key, target, on)
+            recordSynced(key, target, on)
+        }
+    }
+
+    /// Three-way merge of soju's state for `key`, the local state and the state
+    /// at the last sync, so neither side's changes made while apart are lost
+    /// or resurrected.
+    private func finishMetadataSync(_ key: String) {
+        metadataSyncing.remove(key)
+        let server = metadataServerState.removeValue(forKey: key) ?? [:]
+        let local = localFlags(key)
+        let synced = metadataSynced[key] ?? []
         var toServer: [(String, Bool)] = []
-        for (key, nick) in serverBlocked where local[key] == nil {
-            if syncedBlocked.contains(key) {
-                toServer.append((nick, false))                  // unignored here while away
-            } else if let mask = IgnoreMask(parsing: nick) {
-                addRule(mask)                                    // blocked from another client
-            }
-        }
-        for (key, nick) in local where serverBlocked[key] == nil {
-            if syncedBlocked.contains(key) {
-                if let rule = plainIgnore(for: nick) { removeRule(rule) }   // unblocked elsewhere
+        for (name, target) in server where local[name] == nil {
+            if synced.contains(name) {
+                toServer.append((target, false))        // cleared here while away
             } else {
-                toServer.append((nick, true))                   // ignored here while away
+                setLocalFlag(key, target, true)         // set from another client
             }
         }
-        serverBlocked = [:]
-        blockSyncActive = true
-        for (nick, blocked) in toServer {
-            send(IRCMessage(command: "METADATA",
-                            parameters: [nick, "SET", CapabilityName.sojuBlocked, blocked ? "1" : "0"]))
+        for (name, target) in local where server[name] == nil {
+            if synced.contains(name) {
+                setLocalFlag(key, target, false)        // cleared elsewhere
+            } else {
+                toServer.append((target, true))         // set here while away
+            }
         }
-        syncedBlocked = Set(ignores.compactMap { $0.plainNick.map(isupport.caseMapping.fold) })
-        IgnoreStore.saveSynced(syncedBlocked, for: config.id)
+        metadataActive.insert(key)
+        for (target, on) in toServer { sendMetadataFlag(key, target, on) }
+        metadataSynced[key] = Set(localFlags(key).keys)
+        saveSynced(key)
     }
 
     /// The rule equal to `mask` under the network's casemapping, since IRC
@@ -923,9 +1000,9 @@ final class IRCSession: Identifiable {
             if let nick = message.first { currentNick = nick }
             addStatus(message.trailing ?? "Connected.", kind: .event)
             autoJoin()
-            if canSyncBlocks {
-                blockSyncing = true
-                send(IRCMessage(command: "METADATA", parameters: ["*", "SUB", CapabilityName.sojuBlocked]))
+            if canSyncMetadata {
+                metadataSyncing = Set(Self.syncedMetadataKeys)
+                send(IRCMessage(command: "METADATA", parameters: ["*", "SUB"] + Self.syncedMetadataKeys))
             }
             // Channels catch up when the server (re-)JOINs us; queries get no
             // JOIN, so catch up the ones we already hold scrollback for here.
@@ -954,10 +1031,11 @@ final class IRCSession: Identifiable {
                                value: message.parameters.count > 4 ? message.parameters[4] : nil)
             }
         case .metadataSubOK:
-            if blockSyncing, message.parameters.dropFirst().contains(where: {
-                $0.lowercased() == CapabilityName.sojuBlocked
-            }) {
-                finishBlockSync()
+            // RPL_METADATASUBOK <client> <key>… — soju sends one per key, after
+            // that key's current state.
+            for key in message.parameters.dropFirst().map({ $0.lowercased() })
+                where metadataSyncing.contains(key) {
+                finishMetadataSync(key)
             }
         case .metadataUnsubOK, .metadataSubs:
             break

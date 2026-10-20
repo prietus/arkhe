@@ -75,6 +75,7 @@ final class ClientStore {
     /// Builds a session and routes its notifiable events to the app's
     /// notification layer.
     private func makeSession(_ config: SessionConfig) -> IRCSession {
+        TargetFlagStore.seedIfAbsent(.muted, config.id, with: preferences.legacyMutedConversations)
         let session = IRCSession(config: config)
         session.onNotifiableEvent = { [weak self] event in
             self?.notifications.present(event)
@@ -119,6 +120,7 @@ final class ClientStore {
         sessions[id] = nil
         HistoryStore.delete(id)
         IgnoreStore.delete(id)
+        TargetFlagStore.delete(id)
         if selectedSessionID == id {
             selectedSessionID = nil
             selectedBufferID = nil

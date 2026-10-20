@@ -68,21 +68,10 @@ final class Preferences {
     /// Extra words (besides your nick) that trigger a highlight and its alert.
     var highlightKeywords: [String]    { didSet { d.set(highlightKeywords, forKey: K.highlights) } }
 
-    /// Conversations (channels or nicks, lowercased) muted from local alerts.
-    /// Unread/mention state still updates in-app; only the notification is
-    /// suppressed. Remote push (app closed) is decided by the bouncer and isn't
-    /// affected. Managed via `setMuted`.
-    private(set) var mutedConversations: Set<String>
-
-    func isMuted(_ conversation: String) -> Bool {
-        mutedConversations.contains(conversation.lowercased())
-    }
-
-    func setMuted(_ muted: Bool, for conversation: String) {
-        let key = conversation.lowercased()
-        if muted { mutedConversations.insert(key) } else { mutedConversations.remove(key) }
-        d.set(Array(mutedConversations), forKey: K.muted)
-    }
+    /// Legacy: mutes used to be one list for every server. Mutes now live per
+    /// server (`TargetFlagStore`, via `IRCSession.setMuted`); this only seeds
+    /// each server once so upgrading doesn't unmute anything.
+    let legacyMutedConversations: Set<String>
 
     /// Appends a trimmed keyword, ignoring blanks and case-insensitive duplicates.
     func addHighlightKeyword(_ word: String) {
@@ -150,7 +139,7 @@ final class Preferences {
         notificationPreviews = d.object(forKey: K.notifPreview) as? Bool ?? true
         notificationSound = d.object(forKey: K.notifSound) as? Bool ?? true
         highlightKeywords = d.stringArray(forKey: K.highlights) ?? []
-        mutedConversations = Set(d.stringArray(forKey: K.muted) ?? [])
+        legacyMutedConversations = Set(d.stringArray(forKey: K.muted) ?? [])
         remotePushEnabled = d.object(forKey: K.pushEnabled) as? Bool ?? false
         pushRelayURL = d.string(forKey: K.pushRelay) ?? Self.defaultRelayURL
         if let saved = d.string(forKey: K.clientName), !saved.isEmpty {

@@ -81,6 +81,18 @@ final class NotificationService: UNNotificationServiceExtension {
         }
 
         let isChannel = target.hasPrefix("#") || target.hasPrefix("&")
+        // A muted conversation stays quiet: soju only skips pushes for muted
+        // *nicks*, so a highlight in a muted channel still arrives.
+        if TargetFlagStore.anyServer(.muted, contains: isChannel ? target : sender) {
+            content.title = "Arkhe"
+            content.subtitle = ""
+            content.body = "New message"
+            content.sound = nil
+            content.interruptionLevel = .passive
+            content.relevanceScore = 0
+            content.threadIdentifier = "muted"
+            return
+        }
         content.title = isChannel ? target : sender
         content.subtitle = isChannel ? sender : ""
         content.body = text

@@ -101,7 +101,7 @@ final class NotificationManager {
         case .invite where !preferences.notifyOnDirectMessage: return   // personal, like a DM
         default: break
         }
-        if preferences.isMuted(event.bufferName) { return }
+        if TargetFlagStore.load(.muted, event.sessionID).contains(event.bufferName.lowercased()) { return }
         if isDuplicate(event) { return }
         // With remote push on, the bouncer's web push already covers alerts while
         // we're not foreground — don't also raise a local one (that's the extra
