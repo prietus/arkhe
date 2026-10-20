@@ -100,6 +100,14 @@ public struct ISupport: Sendable {
         tokens["MSGREFTYPES"].map { $0.split(separator: ",").map(String.init) } ?? []
     }
 
+    /// `MONITOR`: whether the server can watch nicks for us, and how many. The
+    /// limit is `nil` when the token has no value (no limit). `nil` overall
+    /// means MONITOR isn't supported.
+    public var monitorLimit: Int?? {
+        guard let raw = tokens["MONITOR"] else { return nil }
+        return .some(Int(raw))
+    }
+
     /// The user mode letter that marks an account as a bot (IRCv3 Bot Mode),
     /// from the `BOT` ISUPPORT token (e.g. `BOT=B`). `nil` when unsupported.
     public var botMode: Character? {

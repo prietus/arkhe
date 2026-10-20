@@ -192,6 +192,11 @@ final class IRCSession: Identifiable {
     /// — the common ancestor of the three-way merge on connect.
     private var metadataSynced: [String: Set<String>] = [:]
 
+    /// Nicks (folded) currently on the server's MONITOR list, and whether we've
+    /// started monitoring on this connection (after registration ends).
+    private var monitored: Set<String> = []
+    private var monitorStarted = false
+
     /// The initial soju metadata sync has finished for every key.
     var isMetadataSynced: Bool { metadataSyncing.isEmpty && !metadataActive.isEmpty }
 
@@ -261,6 +266,8 @@ final class IRCSession: Identifiable {
         metadataSyncing = []
         metadataActive = []
         metadataServerState = [:]
+        monitored = []
+        monitorStarted = false
         negotiator = CapabilityNegotiator(desired: config.desiredCaps, mechanism: config.saslMechanism)
         addStatus("Connecting to \(config.host):\(config.port)…", kind: .event)
 
@@ -1060,6 +1067,22 @@ final class IRCSession: Identifiable {
             }
         case .motd, .motdStart, .endOfMotd:
             if let line = message.trailing { addStatus(line, kind: .motd) }
+            if numeric == .endOfMotd { startMonitoring() }
+        case .noMotd:
+            // soju has no MOTD; either way, registration (and ISUPPORT) is done.
+            if let line = message.trailing { addStatus(line, kind: .motd) }
+            startMonitoring()
+        case .monOnline, .monOffline:
+            // RPL_MONONLINE <me> :nick!user@host,… / RPL_MONOFFLINE <me> :nick,…
+            let online = numeric == .monOnline
+            for entry in (message.trailing ?? "").split(separator: ",") {
+                let nick = IRCSource(parsing: entry).nick
+                guard let query = buffer(named: nick, kind: .query, createIfMissing: false) else { continue }
+                query.peerOnline = online
+                if !online { query.peerAway = false }
+            }
+        case .monList, .endOfMonList, .monListFull:
+            break
         case .nicknameInUse:
             handleNickInUse()
         default:
@@ -1229,6 +1252,46 @@ final class IRCSession: Identifiable {
         for buffer in buffers where buffer.kind == .channel {
             buffer.setAway(source.nick, isAway) { isupport.equalIdentifiers($0, $1) }
         }
+        // away-notify (shared channels) or extended-monitor (monitored nicks).
+        buffer(named: source.nick, kind: .query, createIfMissing: false)?.peerAway = isAway
+    }
+
+    // MARK: - MONITOR
+
+    /// Watches every open private conversation once registration is done —
+    /// MONITOR lists don't survive a reconnect, so this runs per connection.
+    private func startMonitoring() {
+        guard !monitorStarted, isupport.monitorLimit != nil else { return }
+        monitorStarted = true
+        monitor(buffers.filter { $0.kind == .query }.map(\.name))
+    }
+
+    /// `MONITOR + a,b,…`, within the server's limit and the line length.
+    private func monitor(_ nicks: [String]) {
+        guard monitorStarted, let limit = isupport.monitorLimit else { return }
+        var batch: [String] = []
+        var length = 0
+        for nick in nicks {
+            let key = isupport.caseMapping.fold(nick)
+            guard !monitored.contains(key), !isupport.isChannel(nick) else { continue }
+            if let limit, monitored.count >= limit { break }
+            if length + nick.count + 1 > 400 {
+                send(IRCMessage(command: "MONITOR", parameters: ["+", batch.joined(separator: ",")]))
+                batch = []
+                length = 0
+            }
+            monitored.insert(key)
+            batch.append(nick)
+            length += nick.count + 1
+        }
+        if !batch.isEmpty {
+            send(IRCMessage(command: "MONITOR", parameters: ["+", batch.joined(separator: ",")]))
+        }
+    }
+
+    private func unmonitor(_ nick: String) {
+        guard monitorStarted, monitored.remove(isupport.caseMapping.fold(nick)) != nil else { return }
+        send(IRCMessage(command: "MONITOR", parameters: ["-", nick]))
     }
 
     private func handleTopic(_ message: IRCMessage) {
@@ -1838,11 +1901,13 @@ final class IRCSession: Identifiable {
         buffer.isHidden = { [weak self] in self?.isIgnored($0) ?? false }
         bufferIndex[key] = buffer
         buffers.append(buffer)
+        if kind == .query { monitor([name]) }
         return buffer
     }
 
     private func removeBuffer(_ buffer: Buffer) {
         guard buffer.kind != .status else { return }
+        if buffer.kind == .query { unmonitor(buffer.name) }
         let key = isupport.caseMapping.fold(buffer.name)
         bufferIndex[key] = nil
         buffers.removeAll { $0.id == buffer.id }

@@ -157,6 +157,11 @@ final class Buffer: Identifiable {
     /// Lines from ignored senders: kept (so un-ignoring shows them again) but
     /// left out of unread counts. Set by the owning session.
     var isHidden: (ChatLine) -> Bool = { _ in false }
+    /// For a private conversation, the other person's presence from MONITOR:
+    /// `nil` while unknown (not monitored, or the server lacks MONITOR).
+    var peerOnline: Bool?
+    /// The other person is /away (extended-monitor, or a shared channel).
+    var peerAway: Bool = false
     /// Server msgids already processed — lines shown AND stateful TAGMSGs
     /// (reactions) applied — so a duplicate delivery (reconnect catch-up overlap,
     /// event-playback replay, multi-batch) is dropped instead of applied twice.

@@ -52,7 +52,13 @@ public enum IRCNumeric: Int, Sendable {
     // Errors the client reacts to during registration
     case noNicknameGiven = 431  // ERR_NONICKNAMEGIVEN
     case erroneousNick = 432    // ERR_ERRONEUSNICKNAME
+    case noMotd = 422           // ERR_NOMOTD
     case nicknameInUse = 433    // ERR_NICKNAMEINUSE
+    case monOnline = 730        // RPL_MONONLINE
+    case monOffline = 731       // RPL_MONOFFLINE
+    case monList = 732          // RPL_MONLIST
+    case endOfMonList = 733     // RPL_ENDOFMONLIST
+    case monListFull = 734      // ERR_MONLISTFULL
     case nickCollision = 436    // ERR_NICKCOLLISION
 
     /// `true` for the 900-range SASL completion codes that end authentication.

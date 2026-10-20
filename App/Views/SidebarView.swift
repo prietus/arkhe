@@ -197,8 +197,9 @@ private struct BufferRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
-                .foregroundStyle(buffer.isJoined || buffer.kind != .channel ? .primary : .secondary)
+                .foregroundStyle(iconStyle)
                 .frame(width: 18)
+                .accessibilityLabel(presenceLabel ?? "")
             Text(buffer.name)
                 .lineLimit(1)
             Spacer()
@@ -243,7 +244,27 @@ private struct BufferRow: View {
         switch buffer.kind {
         case .status: return "bolt.horizontal.circle"
         case .channel: return "number"
-        case .query: return "person"
+        case .query: return buffer.peerOnline == true ? (buffer.peerAway ? "moon.fill" : "person.fill") : "person"
         }
+    }
+
+    /// Queries show the other person's presence (MONITOR): green online,
+    /// yellow away, grey offline; unknown keeps the plain style.
+    private var iconStyle: AnyShapeStyle {
+        switch buffer.kind {
+        case .channel: return AnyShapeStyle(buffer.isJoined ? .primary : .secondary)
+        case .status: return AnyShapeStyle(.primary)
+        case .query:
+            switch buffer.peerOnline {
+            case true?: return AnyShapeStyle(buffer.peerAway ? Color.yellow : Color.green)
+            case false?: return AnyShapeStyle(.secondary)
+            case nil: return AnyShapeStyle(.primary)
+            }
+        }
+    }
+
+    private var presenceLabel: String? {
+        guard buffer.kind == .query, let online = buffer.peerOnline else { return nil }
+        return online ? (buffer.peerAway ? "Away" : "Online") : "Offline"
     }
 }

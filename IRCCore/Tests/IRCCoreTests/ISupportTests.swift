@@ -49,6 +49,13 @@ struct ISupportTests {
         #expect(isupport("BOT=XY").botMode == nil)
     }
 
+    @Test("MONITOR: supported with a limit, without one, or not at all")
+    func monitorLimit() {
+        #expect(isupport("MONITOR=100").monitorLimit == .some(100))
+        #expect(isupport("MONITOR").monitorLimit == .some(nil))
+        #expect(isupport("NETWORK=x").monitorLimit == nil)
+    }
+
     @Test("MSGREFTYPES lists reference types in order")
     func messageReferenceTypes() {
         #expect(isupport("MSGREFTYPES=msgid,timestamp").messageReferenceTypes == ["msgid", "timestamp"])

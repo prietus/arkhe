@@ -496,4 +496,49 @@ struct SessionTests {
         run("/invite", in: channel)
         #expect(session.statusBuffer.lines.last?.kind == .error)
     }
+
+    // MARK: - MONITOR
+
+    @Test("Open queries are monitored after registration; presence and away update")
+    func monitorQueries() async throws {
+        await register(isupport: "MONITOR=100 MSGREFTYPES=timestamp")
+        await transport.receive(":bob!b@h PRIVMSG me :hi")
+        let bob = try #require(await eventually { buffer("bob") != nil } ? buffer("bob") : nil)
+        // Nothing until registration ends (ISUPPORT may still be arriving).
+        #expect(await count("MONITOR + bob") == 0)
+        await transport.receive(":srv 422 me :MOTD File is missing")
+        #expect(await sent("MONITOR + bob"))
+
+        await transport.receive(":srv 730 me :bob!b@h")
+        #expect(await eventually { bob.peerOnline == true })
+        await transport.receive(":bob!b@h AWAY :lunch")
+        #expect(await eventually { bob.peerAway })
+        await transport.receive(":srv 731 me :bob")
+        #expect(await eventually { bob.peerOnline == false })
+        #expect(!bob.peerAway)
+
+        run("/query carol", in: bob)
+        #expect(await sent("MONITOR + carol"))
+        session.part(bob)
+        #expect(await sent("MONITOR - bob"))
+    }
+
+    @Test("Without MONITOR in ISUPPORT nothing is sent and presence stays unknown")
+    func noMonitor() async throws {
+        await register()
+        await transport.receive(":bob!b@h PRIVMSG me :hi", ":srv 376 me :End of MOTD")
+        let bob = try #require(await eventually { buffer("bob") != nil } ? buffer("bob") : nil)
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(await transport.sent.allSatisfy { !$0.hasPrefix("MONITOR") })
+        #expect(bob.peerOnline == nil)
+    }
+
+    @Test("The MONITOR limit is respected")
+    func monitorLimit() async {
+        await register(isupport: "MONITOR=1 MSGREFTYPES=timestamp")
+        await transport.receive(":a!a@h PRIVMSG me :1", ":b!b@h PRIVMSG me :2", ":srv 376 me :End")
+        #expect(await sent("MONITOR + a"))
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(await transport.sent.filter { $0.hasPrefix("MONITOR") } == ["MONITOR + a"])
+    }
 }
