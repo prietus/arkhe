@@ -5,4 +5,5 @@
 • Channel invitations now show up, with a notification, and /invite lets you send them.
 • Push notifications on Ergo servers that support them.
 • Avatars, display names and pronouns in the member list on servers that share them.
+• When you connect straight to a network (no bouncer), the channels you have open are joined again automatically.
 • Fixed older history sometimes stopping too early in busy channels, and successful sign-ins no longer appear in red.
