@@ -279,7 +279,7 @@ final class NotificationManager {
     }
 
     /// (Re)registers a Web Push subscription on every live session whose bouncer
-    /// supports `soju.im/webpush`. Idempotent — soju updates the subscription
+    /// supports Web Push (`soju.im/webpush` or `draft/webpush`). Idempotent — the server updates the subscription
     /// for an endpoint it already knows.
     func registerWebPushEverywhere() {
         guard let store, let preferences, preferences.remotePushEnabled,

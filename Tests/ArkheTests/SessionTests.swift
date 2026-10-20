@@ -64,10 +64,10 @@ struct SessionTests {
 
     /// Connects and completes registration with chathistory and friends.
     /// `isupport` defaults to soju's: timestamp-only message references.
-    func register(isupport: String = "MSGREFTYPES=timestamp") async {
+    func register(isupport: String = "MSGREFTYPES=timestamp", extraCaps: String = "") async {
         session.connect()
         #expect(await sent("CAP LS 302"))
-        let caps = "batch draft/chathistory message-tags server-time"
+        let caps = "batch draft/chathistory message-tags server-time" + (extraCaps.isEmpty ? "" : " " + extraCaps)
         await transport.receive(":srv CAP * LS :\(caps)", ":srv CAP * ACK :\(caps)",
                                 ":srv 001 me :Welcome", ":srv 005 me \(isupport) :are supported")
         #expect(await eventually { session.status == .connected })
@@ -540,5 +540,18 @@ struct SessionTests {
         #expect(await sent("MONITOR + a"))
         try? await Task.sleep(for: .milliseconds(50))
         #expect(await transport.sent.filter { $0.hasPrefix("MONITOR") } == ["MONITOR + a"])
+    }
+
+    // MARK: - Web Push
+
+    @Test("The IRCv3 draft/webpush works like soju.im/webpush (Ergo)")
+    func draftWebPush() async {
+        var ready = 0
+        session.onWebPushReady = { ready += 1 }
+        await register(extraCaps: "draft/webpush")
+        #expect(session.supportsWebPush)
+        #expect(ready == 1)
+        session.registerWebPush(endpoint: "https://push.example/v1/t", p256dh: "P", auth: "A")
+        #expect(await sent("WEBPUSH REGISTER https://push.example/v1/t p256dh=P;auth=A"))
     }
 }

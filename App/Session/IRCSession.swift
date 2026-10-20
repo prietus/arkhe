@@ -61,7 +61,10 @@ final class IRCSession: Identifiable {
     var boundNetworkID: String? { config.boundNetworkID }
 
     /// Whether the connected bouncer offers Web Push (`soju.im/webpush`).
-    var supportsWebPush: Bool { enabledCaps.contains(CapabilityName.webpush) }
+    /// soju's `soju.im/webpush` or the IRCv3 `draft/webpush` (Ergo offers both).
+    var supportsWebPush: Bool {
+        enabledCaps.contains(CapabilityName.webpush) || enabledCaps.contains(CapabilityName.draftWebpush)
+    }
 
     /// Invoked once negotiation finishes and the bouncer supports Web Push, so
     /// the app can register a push subscription. Wired by `ClientStore`.
@@ -950,7 +953,7 @@ final class IRCSession: Identifiable {
         if enabledCaps.contains(CapabilityName.bouncerNetworks), config.boundNetworkID == nil {
             send(IRCMessage(command: "BOUNCER", parameters: ["LISTNETWORKS"]))
         }
-        if enabledCaps.contains(CapabilityName.webpush) { onWebPushReady?() }
+        if supportsWebPush { onWebPushReady?() }
     }
 
     /// cap-notify runtime changes. Once registration finishes the negotiator is a

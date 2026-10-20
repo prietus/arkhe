@@ -75,6 +75,9 @@ public enum CapabilityName {
     public static let sojuPinned = "soju.im/pinned"
     /// Web Push: lets the bouncer push highlights/DMs while the app is closed.
     public static let webpush = "soju.im/webpush"
+    /// The IRCv3 draft of the same extension (Ergo); identical `WEBPUSH` command
+    /// and an encrypted IRC line as the payload.
+    public static let draftWebpush = "draft/webpush"
 
     /// The capabilities the client requests when offered. SASL is requested
     /// only when credentials are configured (handled by the negotiator).
@@ -84,6 +87,6 @@ public enum CapabilityName {
         multiPrefix, userhostInNames, capNotify, setname, inviteNotify,
         standardReplies, chathistory, eventPlayback, messageRedaction, readMarker,
         multiline, bouncerNetworks, bouncerNetworksNotify, noImplicitNames, sojuNoImplicitNames, webpush,
-        metadata, extendedMonitor, draftExtendedMonitor,
+        metadata, extendedMonitor, draftExtendedMonitor, draftWebpush,
     ]
 }
