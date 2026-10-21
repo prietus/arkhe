@@ -32,6 +32,14 @@ const faqs = [
     a: 'Some networks choose not to relay reactions and replies between users. Libera.Chat, for example, only relays typing indicators. Your reactions still sync across your own devices through your bouncer, and Arkhe tells you in the status window when a network blocks them.',
   },
   {
+    q: 'How do I ignore someone, and undo it?',
+    a: '<p>Long-press one of their messages, or their name in the member list, and choose <strong>Ignore</strong>. You can also type <code>/ignore nick</code>, a hostmask like <code>*!*@host.example</code>, or an account as <code>$a:name</code>. Their messages are hidden and never notify you.</p><p>To undo it, use <code>/unignore nick</code>, long-press them in the member list, or go to <strong>Edit server → Ignored users</strong> and swipe the rule away. <code>/ignore</code> on its own lists everyone ignored.</p>',
+  },
+  {
+    q: 'How do I set my avatar, display name or pronouns?',
+    a: 'Open the server’s menu (the ⋯ next to its name), choose <strong>Edit</strong>, then <strong>Profile</strong>. Each network has its own profile. It works on networks that support profiles, such as Ergo; soju bouncers and Libera.Chat don’t. This is coming in the next update.',
+  },
+  {
     q: 'Where is my history and how do I clear it?',
     a: 'Your bouncer holds the full history. Arkhe keeps the most recent lines of each conversation on the device so chats open instantly, and fetches older ones when you scroll up. Turn off <strong>Keep history on device</strong> in Settings to stop this and delete what is stored.',
   },

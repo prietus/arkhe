@@ -6,6 +6,8 @@ import ipadSettings from '../assets/screenshots/ipad-settings.png';
 import iphoneChat from '../assets/screenshots/iphone-chat.png';
 import iphoneMenu from '../assets/screenshots/iphone-context-menu.png';
 import iphoneMembers from '../assets/screenshots/iphone-members.png';
+import iphoneProfiles from '../assets/screenshots/iphone-profiles.png';
+import iphoneProfileEdit from '../assets/screenshots/iphone-profile-edit.png';
 
 const slides = [
   {
@@ -42,7 +44,25 @@ const slides = [
     eyebrow: 'People',
     title: 'See who is around.',
     body:
-      'Member lists show operators, away status and bots at a glance. On large channels the list loads only when you open it, so joining stays fast.',
+      'Member lists show operators, away status and bots at a glance, and private chats show whether the other person is online. Ignore anyone with a long press; on a soju bouncer it follows you to your other clients.',
+  },
+  {
+    img: iphoneProfiles,
+    device: 'iphone',
+    alt: 'iPhone: member list where one member shows an avatar, a display name and pronouns',
+    eyebrow: 'Profiles',
+    title: 'Faces, names and pronouns.',
+    body:
+      'On networks that share profiles, like Ergo, members show their avatar, display name and pronouns. Nicks stay front and centre in the conversation, the way IRC works.',
+  },
+  {
+    img: iphoneProfileEdit,
+    device: 'iphone',
+    alt: 'iPhone: the Profile screen with display name, pronouns, status and an avatar',
+    eyebrow: 'Profiles · coming in the next update',
+    title: 'Your profile, per network.',
+    body:
+      'Set a display name, pronouns, status and avatar for each network. Pick a photo and Arkhe uploads it for you; your profile is published every time you connect.',
   },
   {
     img: iphoneChat,
