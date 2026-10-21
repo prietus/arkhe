@@ -210,6 +210,64 @@ final class IRCSession: Identifiable {
         userMetadata[isupport.caseMapping.fold(nick)] ?? [:]
     }
 
+    /// The user's own profile on this server (draft/metadata-2), published on
+    /// connect and on every change where the server supports it.
+    static let profileKeys = ["display-name", "pronouns", "avatar", "homepage", "status"]
+    private(set) var profile: [String: String] = [:]
+    /// Keys published on this server (persisted), so emptied ones get cleared.
+    private var publishedProfileKeys: Set<String> = []
+
+    /// Profiles work on servers with draft/metadata-2 that aren't soju (soju
+    /// only takes its own per-target keys and doesn't relay others upstream).
+    var supportsProfile: Bool {
+        enabledCaps.contains(CapabilityName.metadata) && !isSoju
+    }
+
+    /// Replaces the profile: saved on the device, and — when connected to a
+    /// server that supports it — only the changes are published.
+    func setProfile(_ newProfile: [String: String]) {
+        let cleaned = newProfile.compactMapValues { value -> String? in
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }.filter { Self.profileKeys.contains($0.key) }
+        let previous = profile
+        profile = cleaned
+        ProfileStore.save(cleaned, for: config.id)
+        guard status == .connected, supportsProfile else { return }
+        for key in Self.profileKeys where cleaned[key] != previous[key] {
+            publishProfileKey(key, cleaned[key])
+        }
+        ProfileStore.savePublished(publishedProfileKeys, for: config.id)
+    }
+
+    /// Publishes the whole profile after registration, clearing keys that
+    /// were emptied while offline.
+    private func publishProfile() {
+        guard supportsProfile else { return }
+        for key in Self.profileKeys {
+            if let value = profile[key] {
+                publishProfileKey(key, value)
+            } else if publishedProfileKeys.contains(key) {
+                publishProfileKey(key, nil)
+            }
+        }
+        ProfileStore.savePublished(publishedProfileKeys, for: config.id)
+    }
+
+    /// `METADATA * SET <key> [:<value>]` — no value clears it. Our own entry in
+    /// `userMetadata` is updated too, so the member list shows it at once.
+    private func publishProfileKey(_ key: String, _ value: String?) {
+        send(IRCMessage(command: "METADATA", parameters: ["*", "SET", key] + (value.map { [$0] } ?? [])))
+        let me = isupport.caseMapping.fold(currentNick)
+        if let value {
+            publishedProfileKeys.insert(key)
+            userMetadata[me, default: [:]][key] = value
+        } else {
+            publishedProfileKeys.remove(key)
+            userMetadata[me]?[key] = nil
+        }
+    }
+
     /// An `avatar` that's a usable http(s) URL.
     func avatarURL(for nick: String) -> URL? {
         guard let raw = metadata(for: nick)["avatar"], let url = URL(string: raw),
@@ -261,6 +319,8 @@ final class IRCSession: Identifiable {
         self.currentNick = config.nickname
         self.negotiator = CapabilityNegotiator(desired: config.desiredCaps, mechanism: config.saslMechanism)
         self.ignores = IgnoreStore.load(config.id)
+        self.profile = ProfileStore.load(config.id)
+        self.publishedProfileKeys = ProfileStore.loadPublished(config.id)
         self.mutedTargets = TargetFlagStore.load(.muted, config.id)
         self.pinnedTargets = TargetFlagStore.load(.pinned, config.id)
         self.metadataSynced = [
@@ -1063,6 +1123,7 @@ final class IRCSession: Identifiable {
             if !subscriptions.isEmpty {
                 send(IRCMessage(command: "METADATA", parameters: ["*", "SUB"] + subscriptions))
             }
+            publishProfile()
             // Channels catch up when the server (re-)JOINs us; queries get no
             // JOIN, so catch up the ones we already hold scrollback for here.
             for buffer in buffers where buffer.kind == .query && buffer.loadedHistory {

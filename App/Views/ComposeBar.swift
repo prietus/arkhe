@@ -224,20 +224,11 @@ struct ComposeBar: View {
         Task { await upload(data: data, filename: url.lastPathComponent, mime: mime) }
     }
 
-    private enum UploadTarget {
-        case server(FileHostTarget)
-        case custom(UploaderSettings.Config)
-    }
-
     private static let noUploaderMessage =
         "This server has no file host. Set up a custom uploader in Settings → Upload."
 
-    /// The server's file host when it has one (and the user prefers it, or has no
-    /// custom uploader); otherwise the custom uploader.
-    private var uploadTarget: UploadTarget? {
-        let custom = uploader.config
-        if let fileHost, uploader.preferServerHost || custom == nil { return .server(fileHost) }
-        return custom.map { .custom($0) }
+    private var uploadTarget: UploadDestination? {
+        FileUploader.destination(fileHost: fileHost, uploader: uploader)
     }
 
     private func upload(data: Data, filename: String, mime: String) async {
@@ -248,15 +239,8 @@ struct ComposeBar: View {
         uploading = true
         defer { uploading = false }
         do {
-            let link: String
-            switch target {
-            case let .server(host):
-                link = try await FileUploader.upload(data: data, filename: filename,
-                                                     mimeType: mime, fileHost: host)
-            case let .custom(config):
-                link = try await FileUploader.upload(data: data, filename: filename,
-                                                     mimeType: mime, config: config)
-            }
+            let link = try await FileUploader.upload(data: data, filename: filename,
+                                                     mimeType: mime, to: target)
             if !text.isEmpty && !text.hasSuffix(" ") { text += " " }
             text += link
             focused = true

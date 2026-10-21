@@ -121,6 +121,7 @@ final class ClientStore {
         HistoryStore.delete(id)
         IgnoreStore.delete(id)
         TargetFlagStore.delete(id)
+        ProfileStore.delete(id)
         if selectedSessionID == id {
             selectedSessionID = nil
             selectedBufferID = nil

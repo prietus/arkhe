@@ -25,6 +25,12 @@ struct FileHostTarget: Sendable {
     var basicPassword: String?
 }
 
+/// Where an upload goes: the IRC server's own file host, or the custom uploader.
+enum UploadDestination: Sendable {
+    case server(FileHostTarget)
+    case custom(UploaderSettings.Config)
+}
+
 /// Uploads a file to a custom HTTP endpoint as `multipart/form-data` and returns
 /// the resulting URL parsed from the response (a JSON key path or the plain
 /// body). Stateless — driven entirely by an `UploaderSettings.Config` snapshot.
@@ -63,6 +69,25 @@ enum FileUploader {
         }
         guard let url = result, !url.isEmpty else { throw FileUploadError.noURLInResponse }
         return url
+    }
+
+    /// The server's file host when it has one (and the user prefers it, or has no
+    /// custom uploader); otherwise the custom uploader. `nil` when neither.
+    @MainActor
+    static func destination(fileHost: FileHostTarget?, uploader: UploaderSettings) -> UploadDestination? {
+        let custom = uploader.config
+        if let fileHost, uploader.preferServerHost || custom == nil { return .server(fileHost) }
+        return custom.map { .custom($0) }
+    }
+
+    static func upload(data: Data, filename: String, mimeType: String,
+                       to destination: UploadDestination) async throws -> String {
+        switch destination {
+        case let .server(host):
+            return try await upload(data: data, filename: filename, mimeType: mimeType, fileHost: host)
+        case let .custom(config):
+            return try await upload(data: data, filename: filename, mimeType: mimeType, config: config)
+        }
     }
 
     /// Uploads to the server's file host: the raw bytes as the POST body, and the

@@ -104,6 +104,11 @@ struct ServerEditView: View {
             if let server {
                 Section {
                     NavigationLink {
+                        ProfileView(server: server)
+                    } label: {
+                        Label("Profile", systemImage: "person.crop.circle")
+                    }
+                    NavigationLink {
                         IgnoreListView(server: server)
                     } label: {
                         Label("Ignored users", systemImage: "eye.slash")

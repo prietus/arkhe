@@ -672,4 +672,54 @@ struct SessionTests {
         await register()
         #expect(await sent("JOIN #test"))
     }
+
+    // MARK: - Own profile
+
+    @Test("The profile is published after registration and shown as ours")
+    func profilePublishedOnConnect() async {
+        defer { ProfileStore.delete(session.config.id) }
+        session.setProfile(["display-name": " Carlos ", "pronouns": "he/him", "bogus": "x", "status": ""])
+        #expect(session.profile == ["display-name": "Carlos", "pronouns": "he/him"])
+        #expect(await transport.sent.isEmpty)               // offline: only saved
+        await register(extraCaps: "draft/metadata-2")
+        #expect(await sent("METADATA * SET display-name Carlos"))
+        #expect(await sent("METADATA * SET pronouns he/him"))
+        #expect(session.metadata(for: "me")["display-name"] == "Carlos")
+    }
+
+    @Test("Live edits publish only the changes; emptied keys are cleared")
+    func profileLiveEdits() async {
+        defer { ProfileStore.delete(session.config.id) }
+        await register(extraCaps: "draft/metadata-2")
+        session.setProfile(["display-name": "Carlos", "status": "Coding"])
+        #expect(await sent("METADATA * SET display-name Carlos"))
+        session.setProfile(["display-name": "Carlos", "status": "At lunch"])
+        #expect(await sent("METADATA * SET status :At lunch"))
+        #expect(await count("METADATA * SET display-name Carlos") == 1)
+        session.setProfile(["display-name": "Carlos"])
+        #expect(await sent("METADATA * SET status"))
+        #expect(session.metadata(for: "me")["status"] == nil)
+    }
+
+    @Test("A key emptied while offline is cleared on the next connect")
+    func profileClearedOffline() async {
+        defer { ProfileStore.delete(session.config.id) }
+        ProfileStore.savePublished(["pronouns"], for: session.config.id)
+        let again = IRCSession(config: session.config, transport: transport)
+        await MainActor.run { again.connect() }
+        #expect(await sent("CAP LS 302"))
+        let caps = "batch message-tags server-time draft/metadata-2"
+        await transport.receive(":srv CAP * LS :\(caps)", ":srv CAP * ACK :\(caps)", ":srv 001 me :Welcome")
+        #expect(await sent("METADATA * SET pronouns"))
+    }
+
+    @Test("Nothing is published on soju or without metadata")
+    func profileNotPublishedOnSoju() async {
+        defer { ProfileStore.delete(session.config.id) }
+        session.setProfile(["display-name": "Carlos"])
+        await register(extraCaps: "draft/metadata-2 soju.im/bouncer-networks")
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(await transport.sent.allSatisfy { !$0.contains("SET") })
+        #expect(!session.supportsProfile)
+    }
 }
