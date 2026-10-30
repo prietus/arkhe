@@ -97,6 +97,13 @@ struct SettingsView: View {
 
                 Section {
                     Toggle("Load images & link previews", isOn: $prefs.autoLoadMedia)
+                    if prefs.autoLoadMedia {
+                        Picker("Image size", selection: $prefs.mediaSize) {
+                            ForEach(Preferences.MediaSize.allCases) { size in
+                                Text(size.label).tag(size)
+                            }
+                        }
+                    }
                     Toggle("Keep history on device", isOn: $prefs.keepHistoryOnDevice)
                 } header: {
                     Text("Media")

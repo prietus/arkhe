@@ -148,6 +148,7 @@ struct AdaptiveMediaView: View {
 /// An inline image thumbnail; tap to view full-screen.
 struct InlineImageView: View {
     let url: URL
+    @Environment(Preferences.self) private var prefs
     @State private var showFull = false
 
     var body: some View {
@@ -161,7 +162,7 @@ struct InlineImageView: View {
                 .frame(width: 160, height: 100)
             case let .success(image):
                 image.resizable().scaledToFit()
-                    .frame(maxWidth: 260, maxHeight: 220)
+                    .frame(maxWidth: prefs.mediaSize.maxSize.width, maxHeight: prefs.mediaSize.maxSize.height)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
                     .contentShape(RoundedRectangle(cornerRadius: 10))
                     .onTapGesture { showFull = true }

@@ -22,6 +22,28 @@ final class Preferences {
         }
     }
 
+    /// How big inline images are drawn in conversations (they keep their aspect
+    /// ratio within this box, and never exceed the available width).
+    enum MediaSize: String, CaseIterable, Identifiable {
+        case small, medium, large
+
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .small:  return "Small"
+            case .medium: return "Medium"
+            case .large:  return "Large"
+            }
+        }
+        var maxSize: CGSize {
+            switch self {
+            case .small:  return CGSize(width: 160, height: 140)
+            case .medium: return CGSize(width: 260, height: 220)
+            case .large:  return CGSize(width: 400, height: 360)
+            }
+        }
+    }
+
     enum ClockStyle: String, CaseIterable, Identifiable {
         case system, twelveHour, twentyFourHour
 
@@ -47,6 +69,7 @@ final class Preferences {
     /// tappable regardless; this only governs automatic network fetches (which
     /// reveal your IP to the link's host — an IRC privacy consideration).
     var autoLoadMedia: Bool                     { didSet { d.set(autoLoadMedia, forKey: K.media) } }
+    var mediaSize: MediaSize                    { didSet { d.set(mediaSize.rawValue, forKey: K.mediaSize) } }
     /// Keep recent scrollback on the device so conversations show instantly at
     /// launch. Turning it off deletes what was stored.
     var keepHistoryOnDevice: Bool {
@@ -110,6 +133,7 @@ final class Preferences {
         static let timestamps = "pref.showTimestamps"
         static let clock      = "pref.clockStyle"
         static let media      = "pref.autoLoadMedia"
+        static let mediaSize  = "pref.mediaSize"
         static let keepHistory = "pref.keepHistoryOnDevice"
         static let notifEnabled = "pref.notificationsEnabled"
         static let notifMention = "pref.notifyOnMention"
@@ -132,6 +156,7 @@ final class Preferences {
         showTimestamps = d.object(forKey: K.timestamps) as? Bool ?? true
         clockStyle = ClockStyle(rawValue: d.string(forKey: K.clock) ?? "") ?? .system
         autoLoadMedia = d.object(forKey: K.media) as? Bool ?? true
+        mediaSize = MediaSize(rawValue: d.string(forKey: K.mediaSize) ?? "") ?? .medium
         keepHistoryOnDevice = d.object(forKey: K.keepHistory) as? Bool ?? true
         notificationsEnabled = d.object(forKey: K.notifEnabled) as? Bool ?? true
         notifyOnMention = d.object(forKey: K.notifMention) as? Bool ?? true
