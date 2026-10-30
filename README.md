@@ -1,7 +1,14 @@
 # Arkhe
 
-An IRC client for iPhone/iPad focused on **IRCv3**, with **SASL** (PLAIN and
-EXTERNAL/**CertFP**) and compatible with soju-style bouncers/relays.
+<p>
+  <a href="https://apps.apple.com/app/arkhe-irc/id6781800095"><img src="https://img.shields.io/itunes/v/6781800095?label=App%20Store&logo=apple&logoColor=white&color=0D96F6" alt="App Store version"></a>
+  <a href="https://apps.apple.com/app/arkhe-irc/id6781800095"><img src="https://img.shields.io/badge/Download_on_the-App_Store-black?logo=apple&logoColor=white" alt="Download on the App Store"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache_2.0-blue" alt="License: Apache 2.0"></a>
+  <img src="https://img.shields.io/badge/iOS-17%2B-lightgrey?logo=apple" alt="iOS 17+">
+</p>
+
+An IRC client for iPhone/iPad focused on **IRCv3**, with **SASL** (PLAIN,
+SCRAM-SHA-256 and EXTERNAL/**CertFP**) and compatible with soju-style bouncers/relays.
 
 Written in Swift 6 + SwiftUI, with a pure, tested protocol core.
 
@@ -32,7 +39,9 @@ IRCCore/                  Pure SPM package (Foundation). No platform dependencie
   SASL                    PLAIN and EXTERNAL: responses and chunking into 400-byte pieces
   Capability*             CAP LS/REQ/ACK/END + SASL flow as a pure state machine
   ISupport / CaseMapping  Parsing of 005 and case folding (ascii/rfc1459)
-  → 30 tests via `swift test`
+  SCRAM / STSPolicy       SCRAM-SHA-256 client and STS policy parsing
+  IgnoreMask              /ignore rules: hostmask globs and $a:account
+  → tests via `swift test`
 
 App/                      iOS target (Arkhe)
   Transport/
@@ -60,24 +69,48 @@ push-relay/               Go: content-blind Web Push → APNs relay (stdlib only
 
 - **Core**: `message-tags`, `server-time` (real timestamps in history), `batch`,
   `labeled-response`, `cap-notify` (CAP NEW/DEL), `standard-replies` (FAIL/WARN/NOTE)
-- **Auth**: `sasl` with **PLAIN** and **EXTERNAL** (CertFP via TLS client certificate)
+- **Security**: `sts` — upgrades to TLS and remembers the policy per host;
+  `sasl` with **PLAIN**, **SCRAM-SHA-256** (used automatically when offered)
+  and **EXTERNAL** (CertFP via TLS client certificate)
 - **Presence & identity**: `account-notify`, `account-tag`, `away-notify`,
   `chghost`, `extended-join`, `multi-prefix`, `userhost-in-names`, `setname`,
-  `invite-notify`, `echo-message` (local echo only when it isn't active)
-- **History**: `draft/chathistory` — automatic scrollback when joining a channel;
-  `draft/event-playback` — replays joins/parts/topics on reconnect, not just messages
+  `invite-notify`, `echo-message` (local echo only when it isn't active),
+  `monitor` + `extended-monitor` (online/away dots on private conversations),
+  WHOX for away state and bot badges on join
+- **Profiles**: `draft/metadata-2` — shows avatars, display names and pronouns
+  in the member list, and lets you publish your own profile per server
+- **History**: `draft/chathistory` — automatic scrollback, catch-up after a
+  reconnect, and jump to the original of a reply (`AROUND`);
+  `draft/event-playback`; `draft/chathistory-end`; history also kept on device
 - **Rich messaging**:
   - `draft/read-marker` (`MARKREAD`) — read position syncs across every client on
     the bouncer, so unread counts and the "new messages" divider follow you device
     to device
   - `draft/multiline` — sends and renders multi-line messages as a single message
   - `draft/message-redaction` (`REDACT`) — delete your own messages (or moderate)
-  - `+draft/reply` threaded replies, `+draft/react`/`+draft/unreact` emoji
-    reactions, and `+typing` typing indicators
-- **soju**: `soju.im/bouncer-networks` (+notify) — discovers and lists the
-  bouncer's networks; `soju.im/webpush` — push notifications while the app is
-  closed; `soju.im/no-implicit-names` — member rosters fetched lazily, per
-  channel viewed, to save mobile data on reconnect
+  - `+reply`/`+draft/reply` threaded replies, `+draft/react`/`+draft/unreact`
+    emoji reactions, and `+typing` typing indicators
+- **Files**: `draft/FILEHOST` uploads, or any custom HTTP uploader/pastebin;
+  inline images (small, medium or large) and link previews
+- **Push**: `draft/webpush` and `soju.im/webpush` — notifications while the app
+  is closed
+- **soju**: `soju.im/search` — server-side message search (falls back to
+  searching on the device); `soju.im/bouncer-networks` (+notify);
+  `no-implicit-names` — member rosters fetched lazily, per channel viewed;
+  blocks, mutes and pins synced with the bouncer (`soju.im/blocked`,
+  `soju.im/muted`, `soju.im/pinned`)
+
+## Client features
+
+- `/ignore` by nick, hostmask or account — hidden in chat and notifications
+- Pin and mute conversations, per server
+- Search messages in a conversation or across all of them
+- Answers CTCP `VERSION`, `PING`, `TIME` and `CLIENTINFO`; `/ctcp` to send them
+- Slash commands: `/join`, `/part`, `/msg`, `/query`, `/me`, `/nick`, `/topic`,
+  `/whois`, `/invite`, `/setname`, `/ignore`, `/ctcp`, `/raw` and more
+- Smart join/part filtering, collapsed events, 12/24h timestamps
+- Raw protocol log (passwords redacted) for debugging
+- Liquid Glass message field on iOS 26
 
 ## Requirements
 
@@ -93,7 +126,7 @@ cd IRCCore && swift test
 # Generate the project and build the app
 xcodegen generate
 xcodebuild -project Arkhe.xcodeproj -scheme Arkhe \
-  -destination 'platform=iOS Simulator,name=iPhone 16' build
+  -destination 'platform=iOS Simulator,name=iPhone 17' build
 ```
 
 Open `Arkhe.xcodeproj` in Xcode to run on a simulator or device.
@@ -135,15 +168,14 @@ Notification Service Extension decrypts it on-device. The relay never sees
 message content or credentials. Self-hosters can point the app at their own
 relay. See [`docs/push-notifications.md`](docs/push-notifications.md).
 
-## Roadmap (next iteration)
+## Roadmap
 
-- Message history persistence (only the config is persisted today)
-- Full per-network bouncer multiplexing (bind / live network switching in the UI)
-- SCRAM-SHA-256, additional slash commands, theming/settings, search
+- `/` command suggestions, day separators, forwarding messages
+- Themes
 
 ## App Store
 
-Arkhe is available on the App Store (€0.99) as a convenient way to install it
+Arkhe is [available on the App Store](https://apps.apple.com/app/arkhe-irc/id6781800095) (€0.99) as a convenient way to install it
 and to support development. The code is open: if you'd rather build it yourself,
 follow the instructions above.
 
