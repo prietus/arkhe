@@ -15,6 +15,7 @@ struct ChatView: View {
     @State private var showingMembers = false
     @State private var showingConsole = false
     @State private var showingJoin = false
+    @State private var showingSearch = false
     @State private var joinChannelText = ""
     /// When prepending older history, the line to keep pinned so the view
     /// doesn't jump.
@@ -62,6 +63,12 @@ struct ChatView: View {
                 }
             }
             ToolbarItem(placement: .primaryAction) {
+                Button { showingSearch = true } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .accessibilityLabel("Search")
+            }
+            ToolbarItem(placement: .primaryAction) {
                 Button { showingJoin = true } label: {
                     Image(systemName: "plus.bubble")
                 }
@@ -85,6 +92,13 @@ struct ChatView: View {
                 .autocorrectionDisabled()
             Button("Join") { performJoin() }
             Button("Cancel", role: .cancel) { joinChannelText = "" }
+        }
+        .sheet(isPresented: $showingSearch) {
+            SearchView(session: session, buffer: buffer.kind == .status ? nil : buffer) { hit in
+                if let target = session.openSearchHit(hit), target.id != buffer.id {
+                    store.select(target, in: session)
+                }
+            }
         }
         .sheet(isPresented: $showingConsole) {
             ProtocolLogView(log: session.protocolLog)
@@ -205,6 +219,12 @@ struct ChatView: View {
                 try? await Task.sleep(for: .milliseconds(60))
                 if let last = displayLines.last { proxy.scrollTo(last.id, anchor: .bottom) }
                 session.markRead(buffer)
+                // Arrived here from a search result in another conversation.
+                if let request = session.jumpRequest, request.bufferID == buffer.id {
+                    session.consumeJump()
+                    try? await Task.sleep(for: .milliseconds(100))
+                    withAnimation { proxy.scrollTo(request.lineID, anchor: .center) }
+                }
             }
             .onDisappear { unreadDividerID = nil; scrollAnchorID = nil; followTask?.cancel() }
         }
@@ -572,14 +592,14 @@ private struct AroundContextSheet: View {
                                      autoLoadMedia: false)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 2)
-                            .background(line.msgid == context.msgid ? Color.accentColor.opacity(0.15) : .clear)
+                            .background(context.isAnchor(line) ? Color.accentColor.opacity(0.15) : .clear)
                             .id(line.id)
                     }
                 }
                 .padding(.vertical, 8)
             }
             .onAppear {
-                if let target = context.lines.first(where: { $0.msgid == context.msgid }) {
+                if let target = context.lines.first(where: { context.isAnchor($0) }) {
                     proxy.scrollTo(target.id, anchor: .center)
                 }
             }

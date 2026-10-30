@@ -722,4 +722,71 @@ struct SessionTests {
         #expect(await transport.sent.allSatisfy { !$0.contains("SET") })
         #expect(!session.supportsProfile)
     }
+
+    // MARK: - Search
+
+    @Test("Server search: one SEARCH per conversation, hits kept apart from the timeline")
+    func serverSearch() async throws {
+        await register(extraCaps: "soju.im/search")
+        await transport.receive(":me!u@h JOIN #a", ":bob!b@h PRIVMSG me :hi")
+        let channel = try #require(await eventually { buffer("#a") != nil && buffer("bob") != nil } ? buffer("#a") : nil)
+        let before = channel.lines.count
+
+        session.search("fast cars; ok", in: nil)
+        #expect(await sent("SEARCH text=fast\\scars\\:\\sok;in=#a;limit=100"))
+        await transport.receive(":srv BATCH +s1 soju.im/search",
+                                "@batch=s1;msgid=m1;time=\(Self.time(10)) :alice!a@h PRIVMSG #a :fast cars; ok",
+                                ":srv BATCH -s1")
+        // The second conversation is searched only after the first answered.
+        #expect(await sent("SEARCH text=fast\\scars\\:\\sok;in=bob;limit=100"))
+        await transport.receive(":srv BATCH +s2 soju.im/search",
+                                "@batch=s2;msgid=m2;time=\(Self.time(20)) :bob!b@h PRIVMSG me :fast cars; ok",
+                                ":srv BATCH -s2")
+        #expect(await eventually { session.searchState?.isSearching == false })
+        #expect(session.searchState?.source == .server)
+        #expect(session.searchState?.hits.map(\.target) == ["bob", "#a"])   // newest first
+        #expect(channel.lines.count == before)
+    }
+
+    @Test("FAIL SEARCH skips that conversation and reports why")
+    func serverSearchFail() async {
+        await register(extraCaps: "soju.im/search")
+        await transport.receive(":me!u@h JOIN #a")
+        #expect(await eventually { buffer("#a") != nil })
+        session.search("x", in: buffer("#a"))
+        #expect(await sent("SEARCH text=x;in=#a;limit=100"))
+        await transport.receive(":srv FAIL SEARCH INTERNAL_ERROR :The search could not be run")
+        #expect(await eventually { session.searchState?.isSearching == false })
+        #expect(session.searchState?.failure == "The search could not be run")
+    }
+
+    @Test("Without soju.im/search the history on the device is searched")
+    func localSearch() async throws {
+        await register()
+        await transport.receive(":me!u@h JOIN #a", ":ana!a@h PRIVMSG #a :Hello World",
+                                ":ana!a@h PRIVMSG #a :bye")
+        let channel = try #require(await eventually { buffer("#a")?.lines.count == 2 } ? buffer("#a") : nil)
+        session.search("world", in: channel)
+        #expect(session.searchState?.source == .device)
+        #expect(session.searchState?.hits.map(\.line.text) == ["Hello World"])
+        #expect(await transport.sent.allSatisfy { !$0.hasPrefix("SEARCH") })
+    }
+
+    @Test("Opening a hit scrolls when loaded, otherwise fetches AROUND its time")
+    func openSearchHit() async throws {
+        await register()
+        await transport.receive(":me!u@h JOIN #a", "@time=\(Self.time(5)) :ana!a@h PRIVMSG #a :here")
+        let channel = try #require(await eventually { buffer("#a")?.lines.count == 1 } ? buffer("#a") : nil)
+        await transport.receive(":srv BATCH +b1 chathistory #a", ":srv BATCH -b1")
+        #expect(await eventually { channel.isLoadingHistory == false })
+
+        let loaded = SearchHit(target: "#a", line: channel.lines[0])
+        session.openSearchHit(loaded)
+        #expect(session.jumpRequest == .init(bufferID: channel.id, lineID: channel.lines[0].id))
+
+        let old = SearchHit(target: "#a", line: ChatLine(timestamp: Date(timeIntervalSince1970: 1_790_000_000),
+                                                          sender: "ana", text: "old", kind: .message, msgid: "zz"))
+        session.openSearchHit(old)
+        #expect(await sent("CHATHISTORY AROUND #a timestamp=\(Self.time(0)) 30"))
+    }
 }

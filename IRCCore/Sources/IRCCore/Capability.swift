@@ -68,6 +68,8 @@ public enum CapabilityName {
     /// soju's per-target metadata keys (over `draft/metadata-2`): its block list
     /// drops a blocked nick's messages and pushes on the bouncer itself.
     public static let sojuBlocked = "soju.im/blocked"
+    /// Server-side message search (`SEARCH`), answered in a `soju.im/search` batch.
+    public static let sojuSearch = "soju.im/search"
     /// With MONITOR, also relays AWAY / account / host changes of monitored nicks.
     public static let extendedMonitor = "extended-monitor"
     public static let draftExtendedMonitor = "draft/extended-monitor"
@@ -87,6 +89,6 @@ public enum CapabilityName {
         multiPrefix, userhostInNames, capNotify, setname, inviteNotify,
         standardReplies, chathistory, eventPlayback, messageRedaction, readMarker,
         multiline, bouncerNetworks, bouncerNetworksNotify, noImplicitNames, sojuNoImplicitNames, webpush,
-        metadata, extendedMonitor, draftExtendedMonitor, draftWebpush,
+        metadata, extendedMonitor, draftExtendedMonitor, draftWebpush, sojuSearch,
     ]
 }

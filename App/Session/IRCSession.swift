@@ -131,6 +131,8 @@ final class IRCSession: Identifiable {
         /// The batch answers our `CHATHISTORY AROUND`: its messages go to
         /// `aroundContext`, not into the buffer.
         var isAroundContext: Bool = false
+        /// The batch answers our `SEARCH`: its messages are search hits.
+        var isSearch: Bool = false
         /// The enclosing batch (e.g. a chathistory batch a multiline sits in).
         var parentRef: String?
         // draft/multiline accumulation: the message's whole-message tags/source
@@ -295,6 +297,13 @@ final class IRCSession: Identifiable {
         enabledCaps.contains(CapabilityName.metadata) && config.isExplicitlyBound
             && isSoju
     }
+
+    /// The current search, if any (`search(_:in:)`).
+    private(set) var searchState: SearchState?
+    /// Conversations still to search on the server — soju searches one per
+    /// request (`in` is mandatory), so "everywhere" is a queue of them.
+    private var searchQueue: [String] = []
+    private var searchAwaitingBatch = false
 
     /// Whether CHATHISTORY takes `msgid=` references here (`MSGREFTYPES`).
     /// soju only takes timestamps and FAILs a msgid bound.
@@ -962,7 +971,8 @@ final class IRCSession: Identifiable {
 
         // Only the messages of an AROUND reply matter; its replayed events
         // (joins, reactions, …) must not touch the live buffer.
-        if let ref = message.tags["batch"], openBatches[ref]?.isAroundContext == true,
+        if let ref = message.tags["batch"],
+           openBatches[ref]?.isAroundContext == true || openBatches[ref]?.isSearch == true,
            !["PRIVMSG", "NOTICE", "BATCH"].contains(message.command) {
             return
         }
@@ -1238,6 +1248,25 @@ final class IRCSession: Identifiable {
         }
         // A message from the server itself (no user@host, a dotted name) isn't a
         // private conversation: it belongs in the status window.
+        // A search hit: shown in the results, never added to a conversation.
+        if let ref = message.tags["batch"], openBatches[ref]?.isSearch == true {
+            let sender = message.source?.nick ?? "*"
+            let isSelf = isupport.equalIdentifiers(sender, currentNick)
+            var body = text
+            var kind: ChatLine.Kind = isNotice ? .notice : .message
+            if text.hasPrefix("\u{01}ACTION "), text.hasSuffix("\u{01}") {
+                body = String(text.dropFirst(8).dropLast())
+                kind = .action
+            } else if text.hasPrefix("\u{01}") {
+                return
+            }
+            let conversation = isupport.isChannel(target) ? target : (isSelf ? target : sender)
+            let line = ChatLine(timestamp: timestamp(from: message), sender: sender, text: body, kind: kind,
+                                isSelf: isSelf, account: message.tags["account"], msgid: message.tags["msgid"],
+                                isHistorical: true, sourceUser: message.source?.user, sourceHost: message.source?.host)
+            searchState?.hits.append(SearchHit(target: conversation, line: line))
+            return
+        }
         if let source = message.source, !source.isUser, !isupport.isChannel(target) {
             if text.hasPrefix("\u{01}") { return }
             statusBuffer.append(ChatLine(timestamp: timestamp(from: message), sender: source.name, text: text,
@@ -1526,6 +1555,10 @@ final class IRCSession: Identifiable {
                catchUpTargets.contains(where: { isupport.equalIdentifiers($0, target) }) {
                 info.isCatchUp = true
             }
+            if type == CapabilityName.sojuSearch, searchAwaitingBatch {
+                info.isSearch = true
+                searchAwaitingBatch = false
+            }
             if isHistory, aroundAwaitingBatch, let target = info.target,
                let context = aroundContext, isupport.equalIdentifiers(context.target, target) {
                 info.isAroundContext = true
@@ -1556,7 +1589,9 @@ final class IRCSession: Identifiable {
             if let info = openBatches[ref], info.type == CapabilityName.multiline {
                 finishMultiline(info)
             }
-            if let info = openBatches[ref], info.isAroundContext {
+            if let info = openBatches[ref], info.isSearch {
+                finishSearchRequest()
+            } else if let info = openBatches[ref], info.isAroundContext {
                 finishAroundContext(failed: false)
             } else if let info = openBatches[ref], info.isHistory, let target = info.target,
                let buffer = buffer(named: target,
@@ -1798,25 +1833,125 @@ final class IRCSession: Identifiable {
     /// Fetches the messages around `msgid` — the original of a reply that's
     /// older than the loaded scrollback — into `aroundContext`.
     func loadContext(around msgid: String, in buffer: Buffer) {
-        guard enabledCaps.contains(CapabilityName.chathistory), status == .connected else {
-            aroundContext = AroundContext(target: buffer.name, msgid: msgid, isLoading: false, failed: true)
+        loadContext(around: msgid, at: nil, in: buffer)
+    }
+
+    /// AROUND a message by msgid where the server takes it, otherwise by its
+    /// time (soju), which is what a search hit always has.
+    func loadContext(around msgid: String?, at time: Date?, in buffer: Buffer) {
+        let selector: String?
+        if let msgid, acceptsMsgidReferences {
+            selector = "msgid=\(msgid)"
+        } else if let time {
+            selector = "timestamp=\(Self.timeFormatter.string(from: time))"
+        } else if let msgid {
+            selector = "msgid=\(msgid)"
+        } else {
+            selector = nil
+        }
+        let context = AroundContext(target: buffer.name, msgid: msgid ?? "", anchor: time)
+        guard let selector, enabledCaps.contains(CapabilityName.chathistory), status == .connected else {
+            var failed = context
+            failed.isLoading = false
+            failed.failed = true
+            aroundContext = failed
             return
         }
         // Serialized with the buffer's other history requests: chathistory
         // batches carry only the target, so two in flight couldn't be told apart.
         guard !buffer.isLoadingHistory else { return }
         buffer.isLoadingHistory = true
-        aroundContext = AroundContext(target: buffer.name, msgid: msgid)
+        aroundContext = context
         aroundAwaitingBatch = true
         send(IRCMessage(command: "CHATHISTORY",
-                        parameters: ["AROUND", buffer.name, "msgid=\(msgid)", "\(Self.aroundContextSize)"]))
+                        parameters: ["AROUND", buffer.name, selector, "\(Self.aroundContextSize)"]))
         // A server without AROUND may answer with a bare numeric instead of FAIL;
         // don't leave the buffer's history requests blocked forever.
+        let id = context.id
         Task { [weak self] in
             try? await Task.sleep(for: .seconds(10))
-            guard let self, self.aroundAwaitingBatch, self.aroundContext?.msgid == msgid else { return }
+            guard let self, self.aroundAwaitingBatch, self.aroundContext?.id == id else { return }
             self.finishAroundContext(failed: true)
         }
+    }
+
+    // MARK: - Search
+
+    /// Searches one conversation, or all of them (`buffer` nil): on the bouncer
+    /// when it offers `soju.im/search`, otherwise through the history held on
+    /// the device. Results land in `searchState`.
+    func search(_ query: String, in buffer: Buffer?) {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty, searchState?.isSearching != true else { return }
+        let scope = buffer.map { [$0] } ?? buffers.filter { $0.kind != .status }
+        if enabledCaps.contains(CapabilityName.sojuSearch), status == .connected {
+            searchState = SearchState(query: query, source: .server, isSearching: true)
+            searchQueue = scope.map(\.name)
+            sendNextSearch()
+        } else {
+            var hits: [SearchHit] = []
+            for buffer in scope {
+                for line in buffer.lines where [.message, .action, .notice].contains(line.kind)
+                    && !line.redacted && !isIgnored(line)
+                    && line.text.localizedCaseInsensitiveContains(query) {
+                    hits.append(SearchHit(target: buffer.name, line: line))
+                }
+            }
+            hits.sort { $0.line.timestamp > $1.line.timestamp }
+            searchState = SearchState(query: query, source: .device, hits: Array(hits.prefix(Self.searchLimit)))
+        }
+    }
+
+    func clearSearch() {
+        guard searchState?.isSearching != true else { return }
+        searchState = nil
+    }
+
+    private static let searchLimit = 100
+
+    /// `SEARCH text=…;in=…;limit=…` for the next conversation in the queue.
+    private func sendNextSearch() {
+        guard let target = searchQueue.first, let query = searchState?.query else {
+            searchState?.isSearching = false
+            searchState?.hits.sort { $0.line.timestamp > $1.line.timestamp }
+            return
+        }
+        searchAwaitingBatch = true
+        let attributes = ["text=\(IRCTagEscaping.escape(query))", "in=\(IRCTagEscaping.escape(target))",
+                          "limit=\(Self.searchLimit)"]
+        send(IRCMessage(command: "SEARCH", parameters: [attributes.joined(separator: ";")]))
+        // Don't let one silent server reply stall the rest of the queue.
+        let pending = searchQueue.count
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard let self, self.searchAwaitingBatch, self.searchQueue.count == pending else { return }
+            self.searchAwaitingBatch = false
+            self.finishSearchRequest()
+        }
+    }
+
+    private func finishSearchRequest() {
+        if !searchQueue.isEmpty { searchQueue.removeFirst() }
+        sendNextSearch()
+    }
+
+    /// Opens a hit: scrolls to it when that conversation already holds it,
+    /// otherwise shows the messages around it (CHATHISTORY AROUND). Returns the
+    /// conversation to select.
+    @discardableResult
+    func openSearchHit(_ hit: SearchHit) -> Buffer? {
+        let kind: Buffer.Kind = isupport.isChannel(hit.target) ? .channel : .query
+        guard let buffer = buffer(named: hit.target, kind: kind, createIfMissing: true) else { return nil }
+        let wanted = hit.line
+        if let line = buffer.lines.first(where: {
+            (wanted.msgid != nil && $0.msgid == wanted.msgid)
+                || ($0.timestamp == wanted.timestamp && $0.sender == wanted.sender && $0.text == wanted.text)
+        }) {
+            jumpRequest = JumpRequest(bufferID: buffer.id, lineID: line.id)
+        } else {
+            loadContext(around: wanted.msgid, at: wanted.timestamp, in: buffer)
+        }
+        return buffer
     }
 
     func dismissAroundContext() {
@@ -1834,7 +1969,7 @@ final class IRCSession: Identifiable {
         aroundAwaitingBatch = false
         context.lines.sort { $0.timestamp < $1.timestamp }
         context.isLoading = false
-        context.failed = failed || !context.lines.contains { $0.msgid == context.msgid }
+        context.failed = failed || !context.lines.contains { context.isAnchor($0) }
         aroundContext = context.dismissed ? nil : context
         buffer(named: context.target, kind: isupport.isChannel(context.target) ? .channel : .query,
                createIfMissing: false)?.isLoadingHistory = false
@@ -2007,6 +2142,12 @@ final class IRCSession: Identifiable {
         case "FAIL": symbol = "✗"; kind = .error
         case "WARN": symbol = "⚠️"; kind = .error
         default:     symbol = "ℹ️"; kind = .event   // NOTE
+        }
+        if message.command == "FAIL", command == "SEARCH", searchState?.isSearching == true {
+            // That conversation couldn't be searched; carry on with the rest.
+            searchAwaitingBatch = false
+            searchState?.failure = description
+            finishSearchRequest()
         }
         if message.command == "FAIL", command == "CHATHISTORY" {
             if aroundContext?.isLoading == true { finishAroundContext(failed: true) }

@@ -90,6 +90,9 @@ struct AroundContext: Identifiable {
     var target: String
     /// The original message the user wants to see.
     var msgid: String
+    /// Its time, when it can't be referenced by msgid (soju takes only
+    /// timestamps) — then the line at this instant is the one highlighted.
+    var anchor: Date? = nil
     var lines: [ChatLine] = []
     var isLoading = true
     /// The server couldn't return it (unsupported, deleted or too old).
@@ -97,7 +100,33 @@ struct AroundContext: Identifiable {
     /// Closed by the user while still loading: kept until its batch arrives so
     /// those messages are still routed here and not into the timeline.
     var dismissed = false
-    var id: String { msgid }
+    var id: String { msgid.isEmpty ? "t\(anchor?.timeIntervalSince1970 ?? 0)" : msgid }
+
+    /// The line the user asked for.
+    func isAnchor(_ line: ChatLine) -> Bool {
+        if !msgid.isEmpty, line.msgid == msgid { return true }
+        guard let anchor else { return false }
+        return abs(line.timestamp.timeIntervalSince(anchor)) < 0.001
+    }
+}
+
+/// One message found by a search, and the conversation it's in.
+struct SearchHit: Identifiable {
+    let id = UUID()
+    var target: String
+    var line: ChatLine
+}
+
+/// A search in progress or done: on the bouncer (`soju.im/search`) when it
+/// offers it, otherwise over the history loaded on the device.
+struct SearchState {
+    enum Source { case server, device }
+    var query: String
+    var source: Source
+    var hits: [SearchHit] = []
+    var isSearching = false
+    /// Why the server couldn't search, if it couldn't.
+    var failure: String?
 }
 
 struct Member: Identifiable, Sendable, Hashable {

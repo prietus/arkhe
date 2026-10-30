@@ -8,8 +8,8 @@ import Foundation
 ///
 /// An unrecognised escape (`\x`) decodes to the literal character, and a
 /// dangling trailing backslash is dropped.
-enum IRCTagEscaping {
-    static func unescape(_ value: Substring) -> String {
+public enum IRCTagEscaping {
+    public static func unescape(_ value: Substring) -> String {
         guard value.contains("\\") else { return String(value) }
         var result = ""
         result.reserveCapacity(value.count)
@@ -32,7 +32,7 @@ enum IRCTagEscaping {
         return result
     }
 
-    static func escape(_ value: String) -> String {
+    public static func escape(_ value: String) -> String {
         var result = ""
         result.reserveCapacity(value.count)
         for char in value {
