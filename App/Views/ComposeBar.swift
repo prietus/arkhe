@@ -32,9 +32,16 @@ struct ComposeBar: View {
     var body: some View {
         VStack(spacing: 0) {
             if focused, !nickSuggestions.isEmpty { suggestionBar }
-            inputRow
+            if Self.usesGlass {
+                // iOS 26: a floating Liquid Glass capsule instead of a full-width bar.
+                inputRow
+                    .glassPanel(cornerRadius: 24, interactive: true, fallback: nil)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 6)
+            } else {
+                inputRow.background(.bar)
+            }
         }
-        .background(.bar)
         .overlay {
             if dropTargeted {
                 RoundedRectangle(cornerRadius: 12)
@@ -69,7 +76,9 @@ struct ComposeBar: View {
                 .textFieldStyle(.plain)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
-                .background(.quaternary, in: RoundedRectangle(cornerRadius: 18))
+                // Inside the glass capsule the field needs no well of its own.
+                .background(Self.usesGlass ? AnyShapeStyle(.clear) : AnyShapeStyle(.quaternary),
+                            in: RoundedRectangle(cornerRadius: 18))
                 .focused($focused)
                 .onSubmit(send)
                 .submitLabel(.send)
@@ -87,6 +96,11 @@ struct ComposeBar: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
+    }
+
+    /// Liquid Glass styling (iOS 26+); earlier versions keep the classic bar.
+    static var usesGlass: Bool {
+        if #available(iOS 26, *) { return true } else { return false }
     }
 
     // MARK: - Nick completion
@@ -117,7 +131,7 @@ struct ComposeBar: View {
                         Text(nick)
                             .font(.callout.weight(.medium))
                             .padding(.horizontal, 12).padding(.vertical, 5)
-                            .background(.quaternary, in: Capsule())
+                            .glassPanel(cornerRadius: 14, interactive: true, fallback: .quaternary)
                     }
                     .buttonStyle(.plain)
                 }

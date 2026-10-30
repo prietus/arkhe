@@ -31,25 +31,18 @@ struct ChatView: View {
     @State private var followTask: Task<Void, Never>?
 
     var body: some View {
-        VStack(spacing: 0) {
-            messageList
-            if buffer.kind != .status {
-                typingBanner
-                if let replyingTo { replyContextBar(replyingTo) }
-            }
-            // The status window accepts commands (e.g. /join #channel) too.
-            ComposeBar(text: $draft,
-                       prompt: buffer.kind == .status ? "Command, e.g. /join #channel" : "Message",
-                       showsAttach: buffer.kind != .status,
-                       nicks: buffer.kind == .channel ? buffer.sortedMembers.map(\.nick) : [],
-                       ownNick: session.currentNick,
-                       fileHost: session.fileHost,
-                       onSend: send)
-                .onChange(of: draft) { _, newValue in
-                    guard buffer.kind != .status else { return }
-                    let active = !newValue.trimmingCharacters(in: .whitespaces).isEmpty
-                    session.notifyTyping(in: buffer, hasText: active)
+        Group {
+            if #available(iOS 26, *) {
+                // Liquid Glass: the message field floats over the conversation,
+                // which scrolls on underneath it (like Messages).
+                messageList
+                    .safeAreaInset(edge: .bottom, spacing: 0) { bottomBar }
+            } else {
+                VStack(spacing: 0) {
+                    messageList
+                    bottomBar
                 }
+            }
         }
         .navigationTitle(buffer.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -437,6 +430,29 @@ struct ChatView: View {
         )
     }
 
+    /// Typing indicator, reply context and the message field.
+    private var bottomBar: some View {
+        VStack(spacing: 4) {
+            if buffer.kind != .status {
+                typingBanner
+                if let replyingTo { replyContextBar(replyingTo) }
+            }
+            // The status window accepts commands (e.g. /join #channel) too.
+            ComposeBar(text: $draft,
+                       prompt: buffer.kind == .status ? "Command, e.g. /join #channel" : "Message",
+                       showsAttach: buffer.kind != .status,
+                       nicks: buffer.kind == .channel ? buffer.sortedMembers.map(\.nick) : [],
+                       ownNick: session.currentNick,
+                       fileHost: session.fileHost,
+                       onSend: send)
+                .onChange(of: draft) { _, newValue in
+                    guard buffer.kind != .status else { return }
+                    let active = !newValue.trimmingCharacters(in: .whitespaces).isEmpty
+                    session.notifyTyping(in: buffer, hasText: active)
+                }
+        }
+    }
+
     private func replyContextBar(_ line: ChatLine) -> some View {
         HStack(spacing: 8) {
             Image(systemName: "arrowshape.turn.up.left.fill")
@@ -452,7 +468,7 @@ struct ChatView: View {
             }
         }
         .padding(.horizontal, 12).padding(.vertical, 6)
-        .background(.quaternary)
+        .glassPanel(cornerRadius: 16, fallback: .quaternary)
     }
 
     @ViewBuilder private var typingBanner: some View {
@@ -462,9 +478,12 @@ struct ChatView: View {
                 HStack(spacing: 6) {
                     ProgressView().scaleEffect(0.6).frame(width: 14)
                     Text(typingText(typers)).font(.caption).foregroundStyle(.secondary)
-                    Spacer()
                 }
-                .padding(.horizontal, 14).padding(.bottom, 2)
+                .padding(.horizontal, 10).padding(.vertical, 3)
+                // Over a scrolling conversation it needs its own backdrop to stay legible.
+                .glassPanel(cornerRadius: 12, fallback: nil)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
             }
         }
     }
