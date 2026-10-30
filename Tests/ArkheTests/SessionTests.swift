@@ -9,7 +9,11 @@ actor FakeTransport: IRCTransport {
     private var continuation: AsyncStream<IRCConnection.Event>.Continuation?
     private(set) var sent: [String] = []
 
+    /// Every endpoint opened, in order (STS upgrades open a second one).
+    private(set) var endpoints: [IRCConnection.Endpoint] = []
+
     func open(_ endpoint: IRCConnection.Endpoint) -> AsyncStream<IRCConnection.Event> {
+        endpoints.append(endpoint)
         let (stream, continuation) = AsyncStream<IRCConnection.Event>.makeStream()
         self.continuation = continuation
         continuation.yield(.ready)
@@ -788,5 +792,76 @@ struct SessionTests {
                                                           sender: "ana", text: "old", kind: .message, msgid: "zz"))
         session.openSearchHit(old)
         #expect(await sent("CHATHISTORY AROUND #a timestamp=\(Self.time(0)) 30"))
+    }
+
+    // MARK: - STS
+
+    @Test("A plaintext connection with an STS upgrade policy reconnects over TLS before requesting anything")
+    func stsUpgrade() async {
+        let config = SessionConfig(host: "sts.example", port: 6667, useTLS: false, nickname: "me")
+        let link = FakeTransport()
+        let plain = IRCSession(config: config, transport: link)
+        defer { STSStore.remove(host: "sts.example") }
+        plain.connect()
+        #expect(await eventually { await link.sent.contains("CAP LS 302") })
+        await link.receive(":srv CAP * LS :batch sts=port=6697,duration=300")
+        #expect(await eventually { await link.endpoints.count == 2 })
+        let second = await link.endpoints.last
+        #expect(second?.useTLS == true)
+        #expect(second?.port == 6697)
+        // Nothing was requested on the insecure connection.
+        #expect(await link.sent.allSatisfy { !$0.hasPrefix("CAP REQ") })
+        // duration only counts over TLS: no policy stored from the plaintext offer.
+        #expect(STSStore.activePolicy(for: "sts.example") == nil)
+    }
+
+    @Test("A policy seen over TLS is remembered and forces TLS next time; duration=0 removes it")
+    func stsPersistence() async {
+        defer { STSStore.remove(host: "sts2.example") }
+        let secureLink = FakeTransport()
+        let secure = IRCSession(config: SessionConfig(host: "sts2.example", port: 6697, nickname: "me"),
+                                transport: secureLink)
+        secure.connect()
+        #expect(await eventually { await secureLink.sent.contains("CAP LS 302") })
+        await secureLink.receive(":srv CAP * LS :batch sts=duration=600,port=6697")
+        #expect(await eventually { STSStore.activePolicy(for: "STS2.example")?.port == 6697 })
+
+        let plainLink = FakeTransport()
+        let later = IRCSession(config: SessionConfig(host: "sts2.example", port: 6667, useTLS: false, nickname: "me"),
+                               transport: plainLink)
+        later.connect()
+        #expect(await eventually { await plainLink.endpoints.count == 1 })
+        #expect(await plainLink.endpoints.first?.useTLS == true)
+        #expect(await plainLink.endpoints.first?.port == 6697)
+
+        STSStore.record(host: "sts2.example", port: 6697, duration: 0)
+        #expect(STSStore.activePolicy(for: "sts2.example") == nil)
+    }
+
+    // MARK: - CTCP
+
+    @Test("CTCP queries to us get replies, at most one per sender every few seconds")
+    func ctcpReplies() async {
+        await register()
+        await transport.receive(":bob!b@h PRIVMSG me :\u{01}VERSION\u{01}")
+        #expect(await eventually { await transport.sent.contains { $0.hasPrefix("NOTICE bob :\u{01}VERSION Arkhe ") } })
+        await transport.receive(":bob!b@h PRIVMSG me :\u{01}PING 123\u{01}")       // too soon: ignored
+        await transport.receive(":ana!a@h PRIVMSG me :\u{01}PING 42\u{01}")
+        #expect(await sent("NOTICE ana :\u{01}PING 42\u{01}"))
+        #expect(await count("NOTICE bob :\u{01}PING 123\u{01}") == 0)
+        // No reply to a channel CTCP, nor a status line for it.
+        await transport.receive(":eve!e@h PRIVMSG #a :\u{01}VERSION\u{01}")
+        try? await Task.sleep(for: .milliseconds(50))
+        #expect(await transport.sent.allSatisfy { !$0.hasPrefix("NOTICE eve") })
+        #expect(buffer("bob") == nil)    // a CTCP never opens a conversation
+    }
+
+    @Test("/ctcp sends a query and the reply shows in the status window")
+    func ctcpCommand() async {
+        await register()
+        run("/ctcp bob version", in: session.statusBuffer)
+        #expect(await eventually { await transport.sent.contains { $0.hasPrefix("PRIVMSG bob ") && $0.hasSuffix("\u{01}VERSION\u{01}") } })
+        await transport.receive(":bob!b@h NOTICE me :\u{01}VERSION irssi 1.4\u{01}")
+        #expect(await eventually { session.statusBuffer.lines.contains { $0.text == "CTCP VERSION reply from bob: irssi 1.4" } })
     }
 }

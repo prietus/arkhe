@@ -298,6 +298,12 @@ final class IRCSession: Identifiable {
             && isSoju
     }
 
+    /// The connection in use: whether it's TLS and on which port (STS needs both).
+    private var connectedSecurely = false
+    private var connectedPort: UInt16 = 0
+    /// Set when an STS upgrade policy asked us to reconnect securely on this port.
+    private var stsUpgradePort: UInt16?
+
     /// The current search, if any (`search(_:in:)`).
     private(set) var searchState: SearchState?
     /// Conversations still to search on the server — soju searches one per
@@ -379,6 +385,7 @@ final class IRCSession: Identifiable {
 
     func disconnect(message: String = "Arkhe") {
         wantsConnection = false
+        if connectedSecurely { STSStore.reschedule(host: config.host) }
         Task { await connection.send(.quit(message)) }
         Task { await connection.disconnect() }
         eventTask?.cancel()
@@ -420,6 +427,7 @@ final class IRCSession: Identifiable {
             case let .error(text):
                 addStatus("⚠️ \(text)", kind: .error)
             case .closed:
+                if connectedSecurely { STSStore.reschedule(host: config.host) }
                 status = .offline
                 addStatus("Connection closed.", kind: .event)
                 for buffer in buffers { buffer.isJoined = false }
@@ -433,10 +441,25 @@ final class IRCSession: Identifiable {
            let data = config.certificateData {
             identity = try TLSIdentity(pkcs12: data, passphrase: config.certificatePassphrase ?? "")
         }
+        // IRCv3 STS: an upgrade just requested, or a remembered policy for this
+        // host, means TLS only — never a plaintext fallback.
+        var useTLS = config.useTLS
+        var port = config.port
+        if let upgrade = stsUpgradePort {
+            stsUpgradePort = nil
+            useTLS = true
+            port = upgrade
+        } else if !useTLS, let policy = STSStore.activePolicy(for: config.host) {
+            useTLS = true
+            port = policy.port
+            addStatus("Connecting securely: \(config.host) requires TLS (STS).", kind: .event)
+        }
+        connectedSecurely = useTLS
+        connectedPort = port
         return IRCConnection.Endpoint(
             host: config.host,
-            port: config.port,
-            useTLS: config.useTLS,
+            port: port,
+            useTLS: useTLS,
             allowInvalidCertificates: config.allowInvalidCertificates,
             clientIdentity: identity
         )
@@ -619,6 +642,15 @@ final class IRCSession: Identifiable {
                 addStatus("Usage: /invite <nick> [#channel]", kind: .error); return
             }
             send(IRCMessage(command: "INVITE", parameters: [nick, channel]))
+
+        case "ctcp":
+            let parts = rest.split(separator: " ", maxSplits: 2).map(String.init)
+            guard parts.count >= 2 else { addStatus("Usage: /ctcp <nick> <VERSION|PING|TIME|CLIENTINFO>", kind: .error); return }
+            var request = parts[1].uppercased()
+            if request == "PING" { request += " \(Int(Date().timeIntervalSince1970 * 1000))" }
+            else if parts.count == 3 { request += " " + parts[2] }
+            send(.privmsg(parts[0], "\u{01}\(request)\u{01}"))
+            note("CTCP \(parts[1].uppercased()) sent to \(parts[0]).", in: buffer)
 
         case "raw", "quote":
             if let message = IRCMessage(parsing: rest) { send(message) }
@@ -964,7 +996,11 @@ final class IRCSession: Identifiable {
     private func handle(_ message: IRCMessage) {
         // Registration is fed every message until it completes.
         if !negotiator.isFinished {
+            let wasListing = negotiator.phase == .listing
             let responses = negotiator.handle(message)
+            // The full CAP LS is in: apply STS before requesting anything, so on a
+            // plaintext connection no credentials go out before the upgrade.
+            if wasListing, negotiator.phase != .listing, applySTS(negotiator.available) { return }
             for response in responses { send(response) }
             if negotiator.isFinished { captureNegotiationResult() }
         }
@@ -1077,6 +1113,9 @@ final class IRCSession: Identifiable {
         guard negotiator.isFinished, message.parameters.count >= 2 else { return }
         switch message.parameters[1].uppercased() {
         case "NEW":
+            // A policy announced later (cap-notify) is stored the same way.
+            let offered = (message.parameter(2) ?? "").split(separator: " ").map(Capability.init(token:))
+            if applySTS(offered) { return }
             // Request newly-offered caps we want and don't already hold. SASL is
             // excluded: we never re-authenticate on a live connection.
             let wanted = capabilityNames(in: message.parameter(2)).filter {
@@ -1091,6 +1130,34 @@ final class IRCSession: Identifiable {
         default:
             break   // NAK: the server refused; nothing was enabled
         }
+    }
+
+    /// IRCv3 STS. On a plaintext connection an upgrade policy (`port`) closes it
+    /// and reconnects securely — returns true then, and nothing else should be
+    /// sent. On a TLS connection a persistence policy (`duration`) is
+    /// remembered for the host (0 removes it).
+    @discardableResult
+    private func applySTS(_ offered: [Capability]) -> Bool {
+        guard let cap = offered.first(where: { $0.name == "sts" }) else { return false }
+        let policy = STSPolicy(value: cap.value)
+        if !connectedSecurely {
+            guard let port = policy.port else { return false }
+            addStatus("\(config.host) requires a secure connection (STS): reconnecting with TLS on port \(port)…",
+                      kind: .event)
+            stsUpgradePort = port
+            eventTask?.cancel()
+            Task { [weak self] in
+                guard let self else { return }
+                await self.connection.disconnect()
+                self.status = .offline
+                self.connect()
+            }
+            return true
+        }
+        if let duration = policy.duration {
+            STSStore.record(host: config.host, port: connectedPort, duration: duration)
+        }
+        return false
     }
 
     /// Splits a `CAP` capability-list parameter into bare names, dropping any
@@ -1281,6 +1348,15 @@ final class IRCSession: Identifiable {
                                           host: message.source?.host, account: message.tags["account"])
         let bufferName = isupport.isChannel(target) ? target : (isSelf ? target : sender)
         let kind: Buffer.Kind = isupport.isChannel(target) ? .channel : .query
+        // CTCP (other than /me) is answered or shown in status, and never opens
+        // a conversation — so it's handled before one is looked up or created.
+        if text.hasPrefix("\u{01}"), !text.hasPrefix("\u{01}ACTION ") {
+            let info = batchInfo(for: message)
+            if let ref = message.tags["batch"], info?.isHistory == true { openBatches[ref]?.messageCount += 1 }
+            handleCTCP(text, from: message.source, target: target, isNotice: isNotice,
+                       historical: info?.isHistory ?? false, ignored: ignored || isSelf)
+            return
+        }
         // An ignored sender never opens a new private conversation.
         guard let buffer = buffer(named: bufferName, kind: kind,
                                   createIfMissing: !(ignored && kind == .query)) else { return }
@@ -1298,7 +1374,7 @@ final class IRCSession: Identifiable {
             body = String(text.dropFirst(8).dropLast())
             lineKind = .action
         } else if text.hasPrefix("\u{01}") {
-            return // ignore other CTCP for now
+            return   // handled above
         }
         let line = ChatLine(
             timestamp: timestamp(from: message),
@@ -2062,6 +2138,55 @@ final class IRCSession: Identifiable {
     }
 
     /// `+draft/react` reaction.
+    // MARK: - CTCP
+
+    /// When we last answered each sender (folded nick), for rate limiting.
+    private var ctcpReplies: [String: Date] = [:]
+
+    /// A CTCP query (in a PRIVMSG) sent straight to us gets a reply for the
+    /// usual commands; a CTCP reply (in a NOTICE), e.g. to our /ctcp, is shown
+    /// in the status window. Channel CTCPs, replays, ignored senders and floods
+    /// (one reply per sender every few seconds) get no answer.
+    private func handleCTCP(_ text: String, from source: IRCSource?, target: String, isNotice: Bool,
+                            historical: Bool, ignored: Bool) {
+        guard let source, !historical, !ignored, !isupport.isChannel(target) else { return }
+        var payload = text.dropFirst()
+        if payload.hasSuffix("\u{01}") { payload = payload.dropLast() }
+        let parts = payload.split(separator: " ", maxSplits: 1).map(String.init)
+        guard let command = parts.first?.uppercased(), !command.isEmpty else { return }
+        let argument = parts.count > 1 ? parts[1] : nil
+
+        if isNotice {
+            var shown = argument ?? ""
+            if command == "PING", let sent = Double(shown) {
+                shown = String(format: "%.2f s", max(0, Date().timeIntervalSince1970 - sent / 1000))
+            }
+            addStatus("CTCP \(command) reply from \(source.nick): \(shown)", kind: .event)
+            return
+        }
+
+        let reply: String?
+        switch command {
+        case "VERSION": reply = "Arkhe \(Self.appVersion) for iOS"
+        case "PING": reply = argument.map { "PING \($0)" } ?? "PING"
+        case "TIME": reply = Date().formatted(.dateTime.weekday().day().month().year().hour().minute().second().timeZone())
+        case "CLIENTINFO": reply = "ACTION CLIENTINFO PING TIME VERSION"
+        default: reply = nil
+        }
+        guard let reply else { return }
+        let key = isupport.caseMapping.fold(source.nick)
+        let now = Date()
+        if let last = ctcpReplies[key], now.timeIntervalSince(last) < 5 { return }
+        ctcpReplies[key] = now
+        // PING echoes its payload as is; the others answer "<COMMAND> <value>".
+        let body = command == "PING" ? reply : "\(command) \(reply)"
+        send(IRCMessage(command: "NOTICE", parameters: [source.nick, "\u{01}\(body)\u{01}"]))
+        addStatus("CTCP \(command) from \(source.nick)", kind: .event)
+    }
+
+    private static let appVersion =
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+
     /// `:inviter INVITE <nick> <channel>` — an invitation for us, or (with
     /// `invite-notify`) a channel operator inviting someone else.
     private func handleInvite(_ message: IRCMessage) {
